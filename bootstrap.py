@@ -2663,9 +2663,6 @@ class Bootstrapper_state_client_conf_env_dir_abs_path_eval_finalized(
         self,
     ) -> ValueType:
 
-        if allow_min:
-            return None
-
         file_data: dict = self.eval_parent_state(
             EnvState.state_client_conf_file_data.name
         )
@@ -2680,6 +2677,9 @@ class Bootstrapper_state_client_conf_env_dir_abs_path_eval_finalized(
         state_primer_ref_root_dir_abs_path_eval_finalized = self.eval_parent_state(
             EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name
         )
+
+        if allow_min:
+            return state_primer_ref_root_dir_abs_path_eval_finalized
 
         # Convert to absolute:
         state_client_conf_env_dir_abs_path_eval_finalized = os.path.join(
