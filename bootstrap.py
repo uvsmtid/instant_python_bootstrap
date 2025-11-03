@@ -2764,6 +2764,10 @@ class Bootstrapper_state_client_link_name_dir_rel_path_eval_finalized(
     def _eval_state_once(
         self,
     ) -> ValueType:
+
+        if allow_min:
+            return None
+
         state_client_conf_file_data: dict = self.eval_parent_state(
             EnvState.state_client_conf_file_data.name
         )
