@@ -1,0 +1,23 @@
+[build-system]
+
+requires = [
+    "setuptools>=42",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "min-venv-bootstrap"
+version = "0.0.0"
+
+# FT_84_11_73_28: supported python versions:
+requires-python = ">=3.7"
+license = { text = "MIT" }
+
+classifiers = [
+    # This package is local and is never published:
+    "Private :: Do Not Upload",
+
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
