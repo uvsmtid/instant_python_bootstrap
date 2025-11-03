@@ -4033,6 +4033,10 @@ class Bootstrapper_state_proto_code_updated(AbstractCachingStateNode[bool]):
     def _eval_state_once(
         self,
     ) -> ValueType:
+
+        if allow_min:
+            return True
+
         state_py_exec_updated_protoprimer_package_reached: PythonExecutable = (
             self.eval_parent_state(
                 EnvState.state_py_exec_updated_protoprimer_package_reached.name
