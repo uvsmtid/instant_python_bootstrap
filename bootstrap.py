@@ -2377,6 +2377,9 @@ class Bootstrapper_state_primer_conf_client_file_abs_path_eval_finalized(
             EnvState.state_proto_conf_file_data.name
         )
 
+        if allow_min:
+            return None
+
         field_client_config_rel_path = state_proto_conf_file_data[
             ConfField.field_primer_conf_client_file_rel_path.value
         ]
