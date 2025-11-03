@@ -2217,6 +2217,12 @@ class Bootstrapper_state_proto_conf_file_data(AbstractCachingStateNode[dict]):
             file_data = read_json_file(
                 state_input_proto_conf_primer_file_abs_path_eval_finalized
             )
+        elif allow_min:
+            file_data = {
+                ConfField.field_primer_ref_root_dir_rel_path.value: ".",
+                # TODO: Do we need to specify it if it does not exist anyway?
+                # ConfField.field_primer_conf_client_file_rel_path.value: "",
+            }
         else:
             raise AssertionError(
                 error_on_missing_conf_file(
