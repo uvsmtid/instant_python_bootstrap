@@ -2865,7 +2865,15 @@ class Bootstrapper_state_env_conf_file_data(AbstractCachingStateNode[dict]):
             EnvState.state_client_conf_env_file_abs_path_eval_finalized.name
         )
         file_data: dict
-        if os.path.exists(state_client_conf_env_file_abs_path_eval_finalized):
+        if allow_min:
+            file_data = {
+                ConfField.field_env_local_python_file_abs_path.value: "/usr/bin/python",
+                ConfField.field_env_local_venv_dir_rel_path.value: "venv",
+                ConfField.field_env_local_log_dir_rel_path.value: "log",
+                ConfField.field_env_local_tmp_dir_rel_path.value: "tmp",
+                ConfField.field_env_build_root_dir_rel_path.value: "build",
+            }
+        elif os.path.exists(state_client_conf_env_file_abs_path_eval_finalized):
             file_data = read_json_file(
                 state_client_conf_env_file_abs_path_eval_finalized
             )
