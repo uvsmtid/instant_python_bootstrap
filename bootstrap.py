@@ -2871,7 +2871,11 @@ class Bootstrapper_state_env_conf_file_data(AbstractCachingStateNode[dict]):
                 ConfField.field_env_local_venv_dir_rel_path.value: "venv",
                 ConfField.field_env_local_log_dir_rel_path.value: "log",
                 ConfField.field_env_local_tmp_dir_rel_path.value: "tmp",
-                ConfField.field_env_build_root_dir_rel_path.value: "build",
+                ConfField.field_env_project_descriptors.value: [
+                    {
+                        ConfField.field_env_build_root_dir_rel_path.value: ".",
+                    },
+                ]
             }
         elif os.path.exists(state_client_conf_env_file_abs_path_eval_finalized):
             file_data = read_json_file(
