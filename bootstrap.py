@@ -2810,6 +2810,9 @@ class Bootstrapper_state_client_conf_env_file_abs_path_eval_finalized(
         self,
     ) -> ValueType:
 
+        if allow_min:
+            return None
+
         state_primer_ref_root_dir_abs_path_eval_finalized: str = self.eval_parent_state(
             EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name
         )
