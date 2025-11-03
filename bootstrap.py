@@ -28,19 +28,24 @@ import tempfile
 import typing
 import venv
 
-# The release process ensures that content in this file matches the version below while tagging the release commit
-# (otherwise, if the file comes from a different commit, the version is irrelevant):
-__version__ = "0.0.10"
-
 from typing import (
     Any,
     Generic,
     TypeVar,
 )
 
+# The release process ensures that content in this file matches the version below while tagging the release commit
+# (otherwise, if the file comes from a different commit, the version is irrelevant):
+__version__ = "0.0.10"
+
+# See:
+# https://github.com/uvsmtid/min-venv-bootstrap
+allow_min: bool = True
+
 logger: logging.Logger = logging.getLogger()
 
 ValueType = TypeVar("ValueType")
+
 
 
 def main(
