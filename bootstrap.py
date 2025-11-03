@@ -2526,6 +2526,9 @@ class Bootstrapper_state_client_local_env_conf_dir_rel_path_eval_finalized(
         self,
     ) -> ValueType:
 
+        if allow_min:
+            return None
+
         client_local_env_dir_any_path: str = (
             self._select_client_local_env_dir_any_path()
         )
