@@ -2415,7 +2415,14 @@ class Bootstrapper_state_client_conf_file_data(AbstractCachingStateNode[dict]):
         state_primer_conf_client_file_abs_path_eval_finalized = self.eval_parent_state(
             EnvState.state_primer_conf_client_file_abs_path_eval_finalized.name
         )
-        if os.path.exists(state_primer_conf_client_file_abs_path_eval_finalized):
+        if allow_min:
+            file_data = {
+                # TODO: Do we need to specify it if it does not exist anyway?
+                # ConfField.field_client_link_name_dir_rel_path.value: None,
+                # TODO: Do we need to specify it if it does not exist anyway?
+                # ConfField.field_client_default_env_dir_rel_path.value: None,
+            }
+        elif os.path.exists(state_primer_conf_client_file_abs_path_eval_finalized):
             file_data = read_json_file(
                 state_primer_conf_client_file_abs_path_eval_finalized
             )
