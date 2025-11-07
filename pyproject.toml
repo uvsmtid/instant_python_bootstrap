@@ -1,0 +1,32 @@
+[build-system]
+
+requires = [
+    "setuptools>=42",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "instant_python_bootstrap"
+version = "0.0.0"
+license = { text = "MIT" }
+
+# FT_84_11_73_28: supported python versions:
+requires-python = ">=3.7"
+
+dependencies = [
+    "setuptools",
+]
+
+classifiers = [
+    # This package is local and is never published:
+    "Private :: Do Not Upload",
+
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[tool.setuptools.packages.find]
+where = [
+    "src",
+]
