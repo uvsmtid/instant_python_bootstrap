@@ -6,7 +6,7 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "min-venv-bootstrap"
+name = "instant_python_bootstrap"
 version = "0.0.0"
 license = { text = "MIT" }
 
