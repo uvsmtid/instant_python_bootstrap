@@ -16,14 +16,19 @@ and this command:
 ./bootstrap.py
 ```
 
-will bootstrap the project `venv` on any platform in single click.
+will bootstrap the project `venv`:
+*   on any platform
+*   in single click
+*   with zero args
+*   with no dependencies
+*   with no configuration
 
-## Customization
+## More info
 
-```
-./bootstrap.py --wizard
-```
+This repo is a demo of a trivial setup for the [protoprimer][protoprimer_github]
+extensible into any sophisticated bootstrap sequence using pure `python`.
 
 ---
 
 [bootstrap.py]: bootstrap.py
+[protoprimer_github]: https://github.com/uvsmtid/protoprimer
