@@ -1,34 +1,56 @@
 
 # instant_python_bootstrap
 
-Place your own `bootstrap.py` verbatim copy next to `pyproject.toml`:
+This [bootstrap.py][bootstrap_script] script hides "evolving setup details" from your users behind a **single click**.
 
-```
-.
-├── *
-├── bootstrap.py
-└── pyproject.toml
-```
+## How?
 
-and this command:
+*   Install:
 
-```sh
-./bootstrap.py
-```
+    ```
+    ./
+    ├── bootstrap.py   <--- own copy
+    ├── pyproject.toml
+    └── *
+    ```
 
-will bootstrap the project `venv`:
-*   on any platform
-*   in single click
-*   with no args
-*   with no deps
-*   with no configs
+    Add your **own copy** of `bootstrap.py` next to your `pyproject.toml`.
 
-## More info
+*   Run (click):
 
-This repo is a demo of a trivial setup for the [protoprimer][protoprimer_github]
-extensible into any sophisticated bootstrap sequence with pure `python`.
+    ```sh
+    ./bootstrap.py
+    ```
+
+## Why?
+
+*   one-click
+*   cross-platform
+*   by default:
+    *   no args
+    *   no deps
+    *   no configs
+*   pure `python` even before `venv` is ready
+
+## Next: evolving setup details
+
+This repo demonstrates a trivial use case (extend-able into any sophisticated bootstrap sequence).
+
+When you need more - see [protoprimer][protoprimer_github]:
+<details>
+<summary>advanced features</summary>
+
+<br>
+
+*   handle environment-specific config
+*   extend the bootstrap sequence by custom steps
+*   configure any directory structure layout
+*   maintain multiple `pyproject.toml` in a monorepo
+*   support other pure `python` scripts even before `venv` is ready
+
+</details>
 
 ---
 
-[bootstrap.py]: bootstrap.py
+[bootstrap_script]: bootstrap.py
 [protoprimer_github]: https://github.com/uvsmtid/protoprimer

@@ -15,6 +15,7 @@ requires-python = ">=3.7"
 
 dependencies = [
     "setuptools",
+    "local_repo @ git+https://github.com/uvsmtid/protoprimer.git@main#subdirectory=src/local_repo",
 ]
 
 classifiers = [
@@ -28,5 +29,5 @@ classifiers = [
 
 [tool.setuptools.packages.find]
 where = [
-    "src",
+    "./src/main",
 ]
