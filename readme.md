@@ -25,11 +25,13 @@ This [bootstrap.py][bootstrap_script] script hides "evolving setup details" from
 ## Why?
 
 *   one-click
-*   cross-platform
 *   by default:
     *   no args
     *   no deps
     *   no configs
+*   user-friendly: no tooling knowledge required
+*   cross-platform: Linux, Mac, Windows
+*   backed by: native `pip` or fast `uv`
 *   pure `python` even before `venv` is ready
 
 ## Next: evolving setup details
