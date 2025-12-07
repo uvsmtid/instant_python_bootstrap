@@ -2,7 +2,7 @@ cfgv==3.4.0
 distlib==0.4.0
 filelock==3.20.0
 identify==2.6.15
-local-repo @ git+https://github.com/uvsmtid/protoprimer.git@cba5dad8cef70ca3395ad6e9aa011edb65a716bf#subdirectory=src/local_repo
+local-repo @ git+https://github.com/uvsmtid/protoprimer.git@c3bf42b9bd22a982e375d6e220c9af67a514e864#subdirectory=src/local_repo
 nodeenv==1.9.1
 platformdirs==4.5.0
 pre-commit==4.4.0
