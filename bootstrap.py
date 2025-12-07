@@ -27,6 +27,7 @@ import sys
 import tempfile
 import typing
 import venv
+from types import CodeType
 from typing import (
     Any,
     Generic,
@@ -35,11 +36,12 @@ from typing import (
 
 # The release process ensures that content in this file matches the version below while tagging the release commit
 # (otherwise, if the file comes from a different commit, the version is irrelevant):
-__version__ = "0.0.11"
+__version__ = "0.2.0"
 
 logger: logging.Logger = logging.getLogger()
 
 ValueType = TypeVar("ValueType")
+DataValueType = TypeVar("DataValueType")
 
 
 def main(
@@ -169,6 +171,11 @@ class TermColor(enum.Enum):
     field_review = f"{fore_bright_green}"
     error_text = f"{back_bright_yellow}{fore_dark_red}"
 
+    config_comment = f"{fore_bright_green}"
+    config_missing = f"{fore_bright_blue}"
+    config_unused = f"{fore_bright_yellow}"
+
+    no_style = ""
     reset_style = "\033[0m"
 
 
@@ -178,7 +185,24 @@ class KeyWord(enum.Enum):
     key_primer = "primer"
     key_client = "client"
     key_env = "env"
-    key_merged = "merged"
+    key_derived = "derived"
+    key_var = "var"
+    key_tmp = "tmp"
+    key_log = "log"
+    key_venv = "venv"
+    key_cache = "cache"
+
+
+class TopDir(enum.Enum):
+    """
+    Top-level directories (or dirs under `TopDir.dir_var`).
+    """
+
+    dir_var = f"{KeyWord.key_var.value}"
+    dir_tmp = f"{KeyWord.key_tmp.value}"
+    dir_log = f"{KeyWord.key_log.value}"
+    dir_venv = f"{KeyWord.key_venv.value}"
+    dir_cache = f"{KeyWord.key_cache.value}"
 
 
 class ConfLeap(enum.Enum):
@@ -196,7 +220,7 @@ class ConfLeap(enum.Enum):
     leap_env = f"{KeyWord.key_env.value}"
 
     # surrogate: no associated config file:
-    leap_merged = f"{KeyWord.key_merged.value}"
+    leap_derived = f"{KeyWord.key_derived.value}"
 
 
 class PrimerRuntime(enum.Enum):
@@ -218,10 +242,11 @@ class RunMode(enum.Enum):
 
     mode_prime = "prime"
 
-    # TODO: implement:
-    mode_check = "check"
+    # TODO: rename to "conf"?
+    mode_config = "config"
 
-    mode_wizard = "wizard"
+    # TODO: implement?
+    mode_check = "check"
 
 
 class CommandAction(enum.Enum):
@@ -230,13 +255,6 @@ class CommandAction(enum.Enum):
     action_reinstall = "reinstall"
 
     action_command = "command"
-
-
-class WizardStage(enum.Enum):
-
-    wizard_started = "wizard_started"
-
-    wizard_finished = "wizard_finished"
 
 
 class FilesystemObject(enum.Enum):
@@ -271,19 +289,23 @@ class EnvVar(enum.Enum):
 
     var_PROTOPRIMER_PROTO_CODE = "PROTOPRIMER_PROTO_CODE"
 
+    var_PROTOPRIMER_CONF_BASENAME = "PROTOPRIMER_CONF_BASENAME"
+
     var_PROTOPRIMER_START_ID = "PROTOPRIMER_START_ID"
 
     var_PROTOPRIMER_PACKAGE_DRIVER = "PROTOPRIMER_PACKAGE_DRIVER"
 
     var_PROTOPRIMER_TEST_MODE = "PROTOPRIMER_TEST_MODE"
     """
-    See `test_perimeter.md` and `test_fast_fat_min_mocked`.
+    See: FT_83_60_72_19.test_perimeter.md / test_fast_fat_min_mocked
     """
 
 
 class ConfDst(enum.Enum):
     """
     See FT_23_37_64_44.conf_dst.md
+
+    TODO: Is this supposed to be called conf src (instead of `conf dst`)?
     """
 
     dst_shebang = "shebang"
@@ -300,8 +322,6 @@ class ValueName(enum.Enum):
     value_do_install = "do_install"
 
     value_run_mode = "run_mode"
-
-    value_wizard_stage = "wizard_stage"
 
     value_final_state = "final_state"
 
@@ -372,7 +392,6 @@ class ParsedArg(enum.Enum):
 
     name_primer_runtime = str(ValueName.value_primer_runtime.value)
     name_run_mode = str(ValueName.value_run_mode.value)
-    name_wizard_stage = str(ValueName.value_wizard_stage.value)
     name_final_state = str(ValueName.value_final_state.value)
 
 
@@ -387,12 +406,11 @@ class SyntaxArg:
     arg_reinstall = f"--{CommandAction.action_reinstall.value}"
 
     arg_mode_prime = f"--{RunMode.mode_prime.value}"
+    arg_mode_config = f"--{RunMode.mode_config.value}"
     arg_mode_check = f"--{RunMode.mode_check.value}"
-    arg_mode_wizard = f"--{RunMode.mode_wizard.value}"
 
     arg_primer_runtime = f"--{ParsedArg.name_primer_runtime.value}"
     arg_run_mode = f"--{ParsedArg.name_run_mode.value}"
-    arg_wizard_stage = f"--{ParsedArg.name_wizard_stage.value}"
     arg_final_state = f"--{ParsedArg.name_final_state.value}"
 
     arg_c = f"-{CommandAction.action_command.value[0]}"
@@ -415,26 +433,25 @@ class SyntaxArg:
 
 
 class ConfField(enum.Enum):
+    """
+    Lists all conf fields from persisted files for every `ConfLeap.*`.
+    """
 
     ####################################################################################################################
     # `ConfLeap.leap_primer`-specific
 
-    # wizard-able:
     # state_primer_ref_root_dir_abs_path_eval_finalized:
     field_primer_ref_root_dir_rel_path = f"{ConfLeap.leap_primer.value}_{PathName.path_ref_root.value}_{FilesystemObject.fs_object_dir.value}_{PathType.path_rel.value}"
 
-    # wizard-able:
-    # state_primer_conf_client_file_abs_path_eval_finalized:
-    field_primer_conf_client_file_rel_path = f"{ConfLeap.leap_primer.value}_{PathName.path_conf_client.value}_{FilesystemObject.fs_object_file.value}_{PathType.path_rel.value}"
+    # state_primer_conf_client_dir_abs_path_eval_finalized
+    field_primer_conf_client_dir_rel_path = f"{ConfLeap.leap_primer.value}_{PathName.path_conf_client.value}_{FilesystemObject.fs_object_dir.value}_{PathType.path_rel.value}"
 
     ####################################################################################################################
     # `ConfLeap.leap_client`-specific
 
-    # wizard-able:
     # state_client_link_name_dir_rel_path_eval_finalized:
     field_client_link_name_dir_rel_path = f"{ConfLeap.leap_client.value}_{PathName.path_link_name.value}_{FilesystemObject.fs_object_dir.value}_{PathType.path_rel.value}"
 
-    # wizard-able:
     # state_client_local_env_conf_dir_rel_path_eval_finalized:
     field_client_default_env_dir_rel_path = f"{ConfLeap.leap_client.value}_{PathName.path_default_env.value}_{FilesystemObject.fs_object_dir.value}_{PathType.path_rel.value}"
 
@@ -444,184 +461,40 @@ class ConfField(enum.Enum):
     # None at the moment.
 
     ####################################################################################################################
-    # FT_00_22_19_59.merged_config.md: override-able fields
+    # Common overridable `global` and `local` fields: FT_23_37_64_44.conf_dst.md
 
-    # wizard-able:
-    # state_merged_required_python_file_abs_path_eval_finalized:
+    # state_derived_required_python_file_abs_path_eval_finalized:
     field_required_python_file_abs_path = f"{PathName.path_required_python.value}_{FilesystemObject.fs_object_file.value}_{PathType.path_abs.value}"
 
-    # wizard-able:
-    # state_merged_local_venv_dir_abs_path_eval_finalized:
+    # state_derived_local_venv_dir_abs_path_eval_finalized:
     field_local_venv_dir_rel_path = f"{PathName.path_local_venv.value}_{FilesystemObject.fs_object_dir.value}_{PathType.path_rel.value}"
 
-    # TODO: make non-wizard-able-default:
-    # TODO: combine by parent dir:
-    # wizard-able:
-    # state_merged_local_log_dir_abs_path_eval_finalized:
+    # TODO: combine by parent dir (~ `./var`):
+    # state_derived_local_log_dir_abs_path_eval_finalized:
     field_local_log_dir_rel_path = f"{PathName.path_local_log.value}_{FilesystemObject.fs_object_dir.value}_{PathType.path_rel.value}"
 
-    # TODO: make non-wizard-able-default:
-    # TODO: combine by parent dir:
-    # wizard-able:
-    # state_merged_local_tmp_dir_abs_path_eval_finalized:
+    # TODO: combine by parent dir (~ `./var`):
+    # state_derived_local_tmp_dir_abs_path_eval_finalized:
     field_local_tmp_dir_rel_path = f"{PathName.path_local_tmp.value}_{FilesystemObject.fs_object_dir.value}_{PathType.path_rel.value}"
 
-    # TODO: make non-wizard-able-default:
-    # TODO: combine by parent dir:
-    # NOT wizard-able:
-    # state_merged_local_cache_dir_abs_path_eval_finalized:
+    # TODO: combine by parent dir (~ `./var`):
+    # state_derived_local_cache_dir_abs_path_eval_finalized:
     field_local_cache_dir_rel_path = f"{PathName.path_local_cache.value}_{FilesystemObject.fs_object_dir.value}_{PathType.path_rel.value}"
 
-    # TODO: make wizard-able:
-    # NOT wizard-able:
-    # state_merged_package_driver_eval_finalized:
+    # state_derived_package_driver_eval_finalized:
     field_package_driver = f"{ValueName.value_package_driver.value}"
 
-    # parent of to-be-wizard-able `field_env_build_root_dir_rel_path` & `field_env_install_extras`:
-    # state_merged_project_descriptors_eval_finalized:
+    # parent of `field_build_root_dir_rel_path` & `field_install_extras`:
+    # state_derived_project_descriptors_eval_finalized:
     field_project_descriptors = f"{ValueName.value_project_descriptors.value}"
 
     ####################################################################################################################
 
-    # TODO: add to `ConfLeap.leap_client`
-    # wizard-able:
-    # install_dependencies:
-    field_env_build_root_dir_rel_path = f"{ConfLeap.leap_env.value}_{PathName.path_build_root.value}_{FilesystemObject.fs_object_dir.value}_{PathType.path_rel.value}"
+    # child of `field_project_descriptors`:
+    field_build_root_dir_rel_path = f"{PathName.path_build_root.value}_{FilesystemObject.fs_object_dir.value}_{PathType.path_rel.value}"
 
-    # TODO: add to `ConfLeap.leap_client`
-    # non-wizard-able-default:
-    # TODO: make wizard-able
-    # install_dependencies:
-    field_env_install_extras = (
-        f"{ConfLeap.leap_env.value}_{ValueName.value_install_extras.value}"
-    )
-
-
-class ConfConstGeneral:
-
-    name_protoprimer_package = "protoprimer"
-    name_proto_code = "proto_code"
-    name_primer_kernel_module = "primer_kernel"
-    default_proto_code_module = "proto_kernel"
-    default_proto_code_basename = f"{default_proto_code_module}.py"
-
-    name_uv_package = "uv"
-
-    curr_dir_rel_path = "."
-
-    # TODO: use lambdas to generate based on input (instead of None):
-    # This is a value declared for completeness,
-    # but unused (evaluated dynamically via the bootstrap process):
-    input_based = None
-
-    file_rel_path_venv_bin = os.path.join(
-        "bin",
-    )
-
-    file_rel_path_venv_python = os.path.join(
-        file_rel_path_venv_bin,
-        "python",
-    )
-
-    file_rel_path_venv_activate = os.path.join(
-        file_rel_path_venv_bin,
-        "activate",
-    )
-
-    file_rel_path_venv_uv = os.path.join(
-        file_rel_path_venv_bin,
-        "uv",
-    )
-
-    func_get_proto_code_generated_boilerplate_single_header = lambda module_obj: (
-        f"""
-################################################################################
-########### !!!!! GENERATED CONTENT - ANY CHANGES WILL BE LOST !!!!! ###########
-################################################################################
-# This is a (proto) copy of `{module_obj.__name__}` updated automatically.
-# It is supposed to be versioned
-# (to be available in the target client repo on clone),
-# but it should not be linted
-# (as its content/style is governed by the source repo).
-################################################################################
-"""
-    )
-
-    func_get_proto_code_generated_boilerplate_multiple_body = lambda module_obj: (
-        f"""
-########### !!!!! GENERATED CONTENT - ANY CHANGES WILL BE LOST !!!!! ###########
-"""
-    )
-
-
-class ConfConstInput:
-    """
-    Constants for FT_89_41_35_82.conf_leap.md / leap_input
-    """
-
-    file_abs_path_script = ConfConstGeneral.input_based
-    dir_abs_path_current = ConfConstGeneral.input_based
-
-    default_proto_conf_dir_rel_path: str = f"{ConfConstGeneral.name_proto_code}"
-
-    # Next FT_89_41_35_82.conf_leap.md: `ConfLeap.leap_primer`:
-    default_file_basename_conf_primer = f"{ConfConstGeneral.default_proto_code_module}.{PathName.path_conf_primer.value}.json"
-
-    ext_env_var_VIRTUAL_ENV: str = "VIRTUAL_ENV"
-    ext_env_var_PATH: str = "PATH"
-    ext_env_var_PYTHONPATH: str = "PYTHONPATH"
-
-    default_PROTOPRIMER_STDERR_LOG_LEVEL: str = "INFO"
-
-    default_PROTOPRIMER_PY_EXEC: str = PythonExecutable.py_exec_unknown.name
-
-    default_PROTOPRIMER_DO_INSTALL: str = str(True)
-
-
-class ConfConstPrimer:
-    """
-    Constants for FT_89_41_35_82.conf_leap.md / leap_primer
-    """
-
-    default_client_conf_dir_rel_path: str = f"{ConfDst.dst_global.value}"
-
-    # Next FT_89_41_35_82.conf_leap.md: `ConfLeap.leap_client`:
-    default_file_basename_leap_client: str = (
-        f"{ConfConstGeneral.default_proto_code_module}.{PathName.path_conf_client.value}.json"
-    )
-
-    default_client_conf_file_rel_path: str = os.path.join(
-        default_client_conf_dir_rel_path,
-        default_file_basename_leap_client,
-    )
-
-
-class ConfConstClient:
-    """
-    Constants for FT_89_41_35_82.conf_leap.md / leap_client
-    """
-
-    default_dir_rel_path_leap_env_link_name: str = os.path.join(
-        ConfDst.dst_local.value,
-    )
-
-    # FT_59_95_81_63.env_layout.md / max layout
-    default_client_default_env_dir_rel_path: str = os.path.join(
-        "dst",
-        "default_env",
-    )
-
-    # Next FT_89_41_35_82.conf_leap.md: `ConfLeap.leap_env`:
-    default_file_basename_leap_env: str = (
-        f"{ConfConstGeneral.default_proto_code_module}.{PathName.path_conf_env.value}.json"
-    )
-
-    default_env_conf_file_rel_path: str = os.path.join(
-        default_client_default_env_dir_rel_path,
-        default_file_basename_leap_env,
-    )
-
-    default_pyproject_toml_basename = "pyproject.toml"
+    # child of `field_project_descriptors`:
+    field_install_extras = f"{ValueName.value_install_extras.value}"
 
 
 class PackageDriverBase:
@@ -657,6 +530,12 @@ class PackageDriverBase:
         required_python_file_abs_path: str,
         given_packages: list[str],
     ):
+        """
+        Install packages (which are not necessarily listed in any of the `pyproject.toml` files).
+
+        This is against UC_78_58_06_54.no_stray_packages.md (in relation to the main `venv`),
+        but it is required for separate non-main `venv`-s created for tools (like `uv`).
+        """
         sub_proc_args: list[str] = self.get_install_dependencies_cmd(
             required_python_file_abs_path,
         )
@@ -686,7 +565,7 @@ class PackageDriverBase:
         editable_project_install_args = []
         for project_descriptor in project_descriptors:
             project_build_root_dir_rel_path = project_descriptor[
-                ConfField.field_env_build_root_dir_rel_path.value
+                ConfField.field_build_root_dir_rel_path.value
             ]
             project_build_root_dir_abs_path = os.path.join(
                 ref_root_dir_abs_path,
@@ -694,9 +573,9 @@ class PackageDriverBase:
             )
 
             install_extras: list[str]
-            if ConfField.field_env_install_extras.value in project_descriptor:
+            if ConfField.field_install_extras.value in project_descriptor:
                 install_extras = project_descriptor[
-                    ConfField.field_env_install_extras.value
+                    ConfField.field_install_extras.value
                 ]
             else:
                 install_extras = []
@@ -860,6 +739,165 @@ class PackageDriverType(enum.Enum):
     driver_uv = PackageDriverUv
 
 
+class ConfConstGeneral:
+
+    # The project name = package name:
+    name_protoprimer_package = "protoprimer"
+
+    # Concept name of the FT_90_65_67_62.proto_code.md:
+    name_proto_code = "proto_code"
+
+    # The main module of the `protoprimer` package (this file):
+    name_primer_kernel_module = "primer_kernel"
+
+    # The default name of for the module of the client own copy of `proto_code` (this file).
+    # It is a different name from `name_primer_kernel_module` purely to avoid confusion.
+    default_proto_code_module = "proto_kernel"
+
+    # File name of the FT_90_65_67_62.proto_code.md:
+    default_proto_code_basename = f"{default_proto_code_module}.py"
+
+    name_uv_package = "uv"
+
+    curr_dir_rel_path = "."
+
+    # TODO: use lambdas to generate based on input (instead of None):
+    # This is a value declared for completeness,
+    # but unused (evaluated dynamically via the bootstrap process):
+    input_based = None
+
+    file_rel_path_venv_bin = os.path.join(
+        "bin",
+    )
+
+    file_rel_path_venv_python = os.path.join(
+        file_rel_path_venv_bin,
+        "python",
+    )
+
+    file_rel_path_venv_activate = os.path.join(
+        file_rel_path_venv_bin,
+        "activate",
+    )
+
+    file_rel_path_venv_uv = os.path.join(
+        file_rel_path_venv_bin,
+        "uv",
+    )
+
+    func_get_proto_code_generated_boilerplate_single_header = lambda module_obj: (
+        f"""
+################################################################################
+########### !!!!! GENERATED CONTENT - ANY CHANGES WILL BE LOST !!!!! ###########
+################################################################################
+# This is a (proto) copy of `{module_obj.__name__}` updated automatically.
+# It is supposed to be versioned
+# (to be available in the target client repo on clone),
+# but it should not be linted
+# (as its content/style is governed by the source repo).
+################################################################################
+"""
+    )
+
+    func_get_proto_code_generated_boilerplate_multiple_body = lambda module_obj: (
+        f"""
+########### !!!!! GENERATED CONTENT - ANY CHANGES WILL BE LOST !!!!! ###########
+"""
+    )
+
+    relative_path_field_note: str = (
+        f"The path is relative to the `{PathName.path_ref_root.value}` dir specified in the `{ConfField.field_primer_ref_root_dir_rel_path.value}` field."
+    )
+    common_field_global_note: str = (
+        f"This field can be specified in global config (see `{ConfLeap.leap_client.name}`) but it is override-able by local environment-specific config (see `{ConfLeap.leap_env.name}`)."
+    )
+    common_field_local_note: str = (
+        f"This local environment-specific field overrides the global one (see description in `{ConfLeap.leap_client.name}`)."
+    )
+    func_note_derived_based_on_common = lambda field_name: (
+        f"This value is derived from `{field_name}` in `{ConfLeap.leap_client.name}` (override-able in `{ConfLeap.leap_env.name}`) - see description there."
+    )
+    func_note_derived_based_on_conf_leap_field = lambda field_name, conf_leap: (
+        f"This value is derived from `{field_name}` - see description in `{conf_leap.name}`."
+    )
+
+
+class ConfConstInput:
+    """
+    Constants for FT_89_41_35_82.conf_leap.md / leap_input
+    """
+
+    file_abs_path_script = ConfConstGeneral.input_based
+    dir_abs_path_current = ConfConstGeneral.input_based
+
+    default_proto_conf_dir_rel_path: str = f"{ConfConstGeneral.name_proto_code}"
+
+    conf_file_ext = "json"
+
+    # Next FT_89_41_35_82.conf_leap.md: `ConfLeap.leap_primer`:
+    default_file_basename_conf_primer = (
+        f"{ConfConstGeneral.name_protoprimer_package}.{conf_file_ext}"
+    )
+
+    ext_env_var_VIRTUAL_ENV: str = "VIRTUAL_ENV"
+    ext_env_var_PATH: str = "PATH"
+    ext_env_var_PYTHONPATH: str = "PYTHONPATH"
+
+    default_PROTOPRIMER_STDERR_LOG_LEVEL: str = "INFO"
+
+    default_PROTOPRIMER_PY_EXEC: str = PythonExecutable.py_exec_unknown.name
+
+    default_PROTOPRIMER_DO_INSTALL: str = str(True)
+
+
+class ConfConstPrimer:
+    """
+    Constants for FT_89_41_35_82.conf_leap.md / leap_primer
+    """
+
+    default_client_conf_dir_rel_path: str = f"{ConfDst.dst_global.value}"
+
+    # Next FT_89_41_35_82.conf_leap.md: `ConfLeap.leap_client`:
+    default_file_basename_leap_client: str = (
+        ConfConstInput.default_file_basename_conf_primer
+    )
+
+    # TODO: Is this still needed if we propagate conf file base name primer -> client -> env?
+    default_client_conf_file_rel_path: str = os.path.join(
+        default_client_conf_dir_rel_path,
+        default_file_basename_leap_client,
+    )
+
+
+class ConfConstClient:
+    """
+    Constants for FT_89_41_35_82.conf_leap.md / leap_client
+    """
+
+    # TODO: Is this used? If link_name is not specified, the env conf dir becomes ref root dir:
+    default_dir_rel_path_leap_env_link_name: str = os.path.join(
+        ConfDst.dst_local.value,
+    )
+
+    # FT_59_95_81_63.env_layout.md / max layout
+    default_client_default_env_dir_rel_path: str = os.path.join(
+        "dst",
+        "default_env",
+    )
+
+    # Next FT_89_41_35_82.conf_leap.md: `ConfLeap.leap_env`:
+    default_file_basename_leap_env: str = (
+        ConfConstInput.default_file_basename_conf_primer
+    )
+
+    default_env_conf_file_rel_path: str = os.path.join(
+        default_client_default_env_dir_rel_path,
+        default_file_basename_leap_env,
+    )
+
+    default_pyproject_toml_basename = "pyproject.toml"
+
+
 class ConfConstEnv:
     """
     Constants for FT_89_41_35_82.conf_leap.md / leap_env
@@ -883,477 +921,6 @@ class ConfConstEnv:
     constraints_txt_basename = "constraints.txt"
 
 
-class FieldWizardMeta:
-
-    def __init__(
-        self,
-        field_name: str,
-        field_help: typing.Callable[[FieldWizardMeta, StateNode, dict], str],
-        # `ConfLeap`-s where the field can exist:
-        field_possible_leaps: list[ConfLeap],
-        # `ConfLeap`-s where the field is wizarded:
-        field_wizard_leaps: list[ConfLeap],
-        # Field name which contains this field as a nested structure (normally, `None`):
-        root_ancestor_field: str | None,
-        # Warn if the wizard cannot handle the field:
-        warn_if_not_wizard_able: typing.Callable[
-            [FieldWizardMeta, StateNode, dict], str | None
-        ],
-        read_value: typing.Callable[[FieldWizardMeta, StateNode, dict], str],
-        validate_value: typing.Callable[
-            [FieldWizardMeta, StateNode, dict, str], str | None
-        ],
-        review_value: typing.Callable[
-            [FieldWizardMeta, StateNode, dict, str], str | None
-        ],
-        write_value: typing.Callable[[FieldWizardMeta, StateNode, dict, str], None],
-    ):
-        self.field_name: str = field_name
-
-        self.field_help: typing.Callable[[FieldWizardMeta, StateNode, dict], str] = (
-            FieldWizardMeta.get_callable(field_help)
-        )
-
-        self.field_possible_leaps: list[ConfLeap] = field_possible_leaps
-
-        self.field_wizard_leaps: list[ConfLeap] = field_wizard_leaps
-
-        if root_ancestor_field is None:
-            # For simplicity, set to `field_name` if `None`:
-            self.root_ancestor_field: str = field_name
-        else:
-            self.root_ancestor_field: str = root_ancestor_field
-
-        self.warn_if_not_wizard_able: typing.Callable[
-            [FieldWizardMeta, StateNode, dict], str | None
-        ] = FieldWizardMeta.get_callable(warn_if_not_wizard_able)
-
-        self.read_value: typing.Callable[[FieldWizardMeta, StateNode, dict], str] = (
-            FieldWizardMeta.get_callable(read_value)
-        )
-
-        self.validate_value: typing.Callable[
-            [FieldWizardMeta, StateNode, dict, str], str | None
-        ] = FieldWizardMeta.get_callable(validate_value)
-
-        self.review_value: typing.Callable[
-            [FieldWizardMeta, StateNode, dict, str], str | None
-        ] = FieldWizardMeta.get_callable(review_value)
-
-        self.write_value: typing.Callable[
-            [FieldWizardMeta, StateNode, dict, str], None
-        ] = FieldWizardMeta.get_callable(write_value)
-
-    @staticmethod
-    def get_callable(staticmethod_or_callable):
-        """
-        This explicit function is only needed for earlier Python (e.g. 3.8) due to PEP 695 - ask LLM why.
-        """
-        if isinstance(staticmethod_or_callable, staticmethod):
-            return staticmethod_or_callable.__func__
-        else:
-            return staticmethod_or_callable
-
-
-class WizardField(enum.Enum):
-
-    @staticmethod
-    def enumerate_conf_leap_wizardable_fields(
-        conf_leap: ConfLeap,
-    ) -> list[tuple[int, WizardField]]:
-        enumerated_conf_leap_wizardable_fields: list[tuple[int, WizardField]] = []
-        for total_ordinal_i, wizard_field in enumerate(WizardField):
-            if conf_leap in wizard_field.value.field_wizard_leaps:
-                enumerated_conf_leap_wizardable_fields.append(
-                    (total_ordinal_i, wizard_field)
-                )
-        return enumerated_conf_leap_wizardable_fields
-
-    @staticmethod
-    def enumerate_possible_fields() -> list[tuple[int, WizardField]]:
-        enumerated_possible_fields: list[tuple[int, WizardField]] = []
-        for total_ordinal_i, wizard_field in enumerate(WizardField):
-            enumerated_possible_fields.append((total_ordinal_i, wizard_field))
-        return enumerated_possible_fields
-
-    @staticmethod
-    def warn_if_not_wizard_able_field_env_build_root_dir_rel_path(
-        wizard_meta: FieldWizardMeta,
-        state_node: StateNode,
-        file_data: dict,
-    ) -> str | None:
-        """
-        Wizard is limited to simple field-value pairs only in the root of the conf file.
-        But `ConfField.field_env_build_root_dir_rel_path` is part of a `list` of nested `dict`-s.
-        Since the wizard is supposed to be used only for initial setup,
-        it only supports updating a path to a lone project.
-        Essentially, the wizard reduces that field to a single field-value pair only.
-        """
-        assert (
-            wizard_meta.field_name == ConfField.field_env_build_root_dir_rel_path.value
-        )
-        warn_text = (
-            f"WARNING: Field [{ConfField.field_env_build_root_dir_rel_path.value}] cannot be updated by the wizard anymore. "
-            f"To use the wizard for this field again, remove the entire [{ConfField.field_project_descriptors.value}] field manually. "
-            f"See in the corresponding [{FieldWizardMeta.__name__}] entry in the code. "
-        )
-        if ConfField.field_project_descriptors.value not in file_data:
-            return None
-        field_project_descriptors = file_data[ConfField.field_project_descriptors.value]
-        assert isinstance(field_project_descriptors, list)
-        if len(field_project_descriptors) > 1:
-            return warn_text
-        if len(field_project_descriptors) < 1:
-            return None
-        single_project_descriptor = field_project_descriptors[0]
-        assert isinstance(single_project_descriptor, dict)
-
-        if (
-            ConfField.field_env_build_root_dir_rel_path.value
-            in single_project_descriptor
-        ):
-            build_root = single_project_descriptor[
-                ConfField.field_env_build_root_dir_rel_path.value
-            ]
-            assert isinstance(build_root, str)
-
-        if ConfField.field_env_install_extras.value in single_project_descriptor:
-            install_extras = single_project_descriptor[
-                ConfField.field_env_install_extras.value
-            ]
-            assert isinstance(install_extras, list)
-            if len(install_extras) > 0:
-                return warn_text
-
-        return None
-
-    @staticmethod
-    def read_field_env_build_root_dir_rel_path(
-        wizard_meta: FieldWizardMeta,
-        state_node: StateNode,
-        file_data: dict,
-    ) -> str:
-        """
-        Reads a single value of `ConfField.field_env_build_root_dir_rel_path`.
-
-        See `warn_if_not_wizard_able_field_env_build_root_dir_rel_path`.
-        """
-        single_project = WizardField.get_assumed_single_project_descriptor(file_data)
-
-        field_env_build_root_dir_rel_path: str
-        if ConfField.field_env_build_root_dir_rel_path.value in single_project:
-            field_env_build_root_dir_rel_path = single_project[
-                ConfField.field_env_build_root_dir_rel_path.value
-            ]
-        else:
-            field_env_build_root_dir_rel_path = ConfConstGeneral.curr_dir_rel_path
-        assert isinstance(field_env_build_root_dir_rel_path, str)
-
-        return field_env_build_root_dir_rel_path
-
-    @staticmethod
-    def write_field_env_build_root_dir_rel_path(
-        wizard_meta: FieldWizardMeta,
-        state_node: StateNode,
-        file_data: dict,
-        field_value: str,
-    ) -> None:
-        """
-        Writes a single value of `ConfField.field_env_build_root_dir_rel_path`.
-
-        See `warn_if_not_wizard_able_field_env_build_root_dir_rel_path`.
-        """
-        single_project = WizardField.get_assumed_single_project_descriptor(file_data)
-        single_project[ConfField.field_env_build_root_dir_rel_path.value] = field_value
-        file_data[ConfField.field_project_descriptors.value] = [
-            single_project,
-        ]
-
-    @staticmethod
-    def get_assumed_single_project_descriptor(file_data: dict) -> dict:
-        project_descriptors: list[dict]
-        if ConfField.field_project_descriptors.value in file_data:
-            project_descriptors = file_data[ConfField.field_project_descriptors.value]
-        else:
-            project_descriptors = []
-        assert isinstance(project_descriptors, list)
-        if len(project_descriptors) < 1:
-            project_descriptors.append({})
-        assert len(project_descriptors) == 1
-        single_project = project_descriptors[0]
-        return single_project
-
-    @staticmethod
-    def read_value_trivially(
-        wizard_meta: FieldWizardMeta,
-        state_node: StateNode,
-        file_data: dict,
-    ) -> str:
-        return file_data[wizard_meta.field_name]
-
-    @staticmethod
-    def validate_value_trivially(
-        wizard_meta: FieldWizardMeta,
-        state_node: StateNode,
-        file_data: dict,
-        field_value: str,
-    ) -> str | None:
-        return None
-
-    @staticmethod
-    def validate_rel_path_exists(
-        wizard_meta,
-        state_node,
-        file_data,
-        rel_path: str,
-        base_name: str,
-        base_abs_path: str,
-    ) -> str | None:
-        full_abs_path: str = os.path.join(
-            base_abs_path,
-            rel_path,
-        )
-        if os.path.exists(full_abs_path):
-            return None
-        else:
-            return f"The base `{base_name}` [{base_abs_path}] and relative `{wizard_meta.field_name}` [{rel_path}] point to a non-existent path [{full_abs_path}]."
-
-    @staticmethod
-    def write_value_trivially(
-        wizard_meta: FieldWizardMeta,
-        state_node: StateNode,
-        file_data: dict,
-        # TODO: support any type of field values (currently, only `str` exists):
-        field_value: str,
-    ) -> None:
-        file_data[wizard_meta.field_name] = field_value
-
-    @staticmethod
-    def review_value_trivially(
-        wizard_meta: FieldWizardMeta,
-        state_node: StateNode,
-        file_data: dict,
-        field_value: str,
-    ) -> str | None:
-        return None
-
-    field_primer_ref_root_dir_rel_path = FieldWizardMeta(
-        field_name=ConfField.field_primer_ref_root_dir_rel_path.value,
-        field_help=lambda wizard_meta, state_node, file_data: (
-            f"Field `{ConfField.field_primer_ref_root_dir_rel_path.value}` (or `{PathName.path_ref_root.value}` for short) leads to the client reference root "
-            f"from the proto code script dir [{state_node.eval_parent_state(EnvState.state_input_proto_code_dir_abs_path_eval_finalized.name)}]. "
-            f"Subsequently, the client reference root `{PathName.path_ref_root.value}` is used as a base path for the most of the relative paths. "
-        ),
-        field_possible_leaps=[
-            ConfLeap.leap_primer,
-        ],
-        field_wizard_leaps=[
-            ConfLeap.leap_primer,
-        ],
-        root_ancestor_field=None,
-        warn_if_not_wizard_able=lambda wizard_meta, state_node, file_data: None,
-        read_value=read_value_trivially,
-        validate_value=lambda wizard_meta, state_node, file_data, field_value: WizardField.validate_rel_path_exists(
-            wizard_meta,
-            state_node,
-            file_data,
-            field_value,
-            PathName.path_proto_dir.value,
-            state_node.eval_parent_state(
-                EnvState.state_input_proto_code_dir_abs_path_eval_finalized.name
-            ),
-        ),
-        # TODO: consider wrapping it into a function - line is too long:
-        review_value=lambda wizard_meta, state_node, file_data, field_value: (
-            f"The base [{state_node.eval_parent_state(EnvState.state_input_proto_code_dir_abs_path_eval_finalized.name)}] "
-            f"and the relative [{field_value}] paths resolves into absolute "
-            f"[{os.path.normpath(os.path.join(state_node.eval_parent_state(EnvState.state_input_proto_code_dir_abs_path_eval_finalized.name), field_value))}]. "
-        ),
-        write_value=write_value_trivially,
-    )
-
-    field_primer_conf_client_file_rel_path = FieldWizardMeta(
-        field_name=ConfField.field_primer_conf_client_file_rel_path.value,
-        field_help=lambda wizard_meta, state_node, file_data: (
-            f"Field `{ConfField.field_primer_conf_client_file_rel_path.value}` (or `{PathName.path_conf_client.value}` for short) leads to the client global configuration "
-            f"from the client reference root `{PathName.path_ref_root.value}`. "
-            f"Subsequently, the client global configuration `{PathName.path_conf_client.value}` (configuration not specific to the local environment) "
-            f"is used by every deployment. "
-        ),
-        field_possible_leaps=[
-            ConfLeap.leap_primer,
-        ],
-        field_wizard_leaps=[
-            ConfLeap.leap_primer,
-        ],
-        root_ancestor_field=None,
-        warn_if_not_wizard_able=lambda wizard_meta, state_node, file_data: None,
-        read_value=read_value_trivially,
-        # NOTE: The file is allowed not to exist:
-        validate_value=validate_value_trivially,
-        # TODO: consider wrapping it into a function - line is too long:
-        review_value=lambda wizard_meta, state_node, file_data, field_value: (
-            f"The relative path [{field_value}] "
-            f"resolves into absolute path "
-            f"[{os.path.normpath(os.path.join(state_node.eval_parent_state(EnvState.state_input_proto_code_dir_abs_path_eval_finalized.name), WizardField.field_primer_ref_root_dir_rel_path.value.read_value(WizardField.field_primer_ref_root_dir_rel_path.value, state_node, file_data), field_value))}]. "
-        ),
-        write_value=write_value_trivially,
-    )
-
-    field_client_link_name_dir_rel_path = FieldWizardMeta(
-        field_name=ConfField.field_client_link_name_dir_rel_path.value,
-        field_help=lambda wizard_meta, state_node, file_data: (
-            # TODO:
-            f"Field `{ConfField.field_client_link_name_dir_rel_path.value}` TODO"
-        ),
-        field_possible_leaps=[
-            ConfLeap.leap_client,
-        ],
-        field_wizard_leaps=[
-            ConfLeap.leap_client,
-        ],
-        root_ancestor_field=None,
-        warn_if_not_wizard_able=lambda wizard_meta, state_node, file_data: None,
-        read_value=read_value_trivially,
-        # TODO:
-        validate_value=validate_value_trivially,
-        # TODO:
-        review_value=review_value_trivially,
-        write_value=write_value_trivially,
-    )
-
-    field_client_default_env_dir_rel_path = FieldWizardMeta(
-        field_name=ConfField.field_client_default_env_dir_rel_path.value,
-        field_help=lambda wizard_meta, state_node, file_data: (
-            # TODO:
-            f"Field `{ConfField.field_client_default_env_dir_rel_path.value}` TODO"
-        ),
-        field_possible_leaps=[
-            ConfLeap.leap_client,
-        ],
-        field_wizard_leaps=[
-            ConfLeap.leap_client,
-        ],
-        root_ancestor_field=None,
-        warn_if_not_wizard_able=lambda wizard_meta, state_node, file_data: None,
-        read_value=read_value_trivially,
-        # TODO:
-        validate_value=validate_value_trivially,
-        # TODO:
-        review_value=review_value_trivially,
-        write_value=write_value_trivially,
-    )
-
-    field_required_python_file_abs_path = FieldWizardMeta(
-        field_name=ConfField.field_required_python_file_abs_path.value,
-        field_help=lambda wizard_meta, state_node, file_data: (
-            # TODO:
-            f"Field `{ConfField.field_required_python_file_abs_path.value}` TODO"
-        ),
-        field_possible_leaps=[
-            ConfLeap.leap_client,
-            ConfLeap.leap_env,
-        ],
-        field_wizard_leaps=[
-            ConfLeap.leap_client,
-        ],
-        root_ancestor_field=None,
-        warn_if_not_wizard_able=lambda wizard_meta, state_node, file_data: None,
-        read_value=read_value_trivially,
-        # TODO:
-        validate_value=validate_value_trivially,
-        # TODO:
-        review_value=review_value_trivially,
-        write_value=write_value_trivially,
-    )
-
-    field_local_venv_dir_rel_path = FieldWizardMeta(
-        field_name=ConfField.field_local_venv_dir_rel_path.value,
-        field_help=lambda wizard_meta, state_node, file_data: (
-            # TODO:
-            f"Field `{ConfField.field_local_venv_dir_rel_path.value}` TODO"
-        ),
-        field_possible_leaps=[
-            ConfLeap.leap_client,
-            ConfLeap.leap_env,
-        ],
-        field_wizard_leaps=[
-            ConfLeap.leap_client,
-        ],
-        root_ancestor_field=None,
-        warn_if_not_wizard_able=lambda wizard_meta, state_node, file_data: None,
-        read_value=read_value_trivially,
-        # TODO:
-        validate_value=validate_value_trivially,
-        # TODO:
-        review_value=review_value_trivially,
-        write_value=write_value_trivially,
-    )
-
-    field_local_log_dir_rel_path = FieldWizardMeta(
-        field_name=ConfField.field_local_log_dir_rel_path.value,
-        field_help=lambda wizard_meta, state_node, file_data: (
-            f"Field `{ConfField.field_local_log_dir_rel_path.value}` (or `{PathName.path_local_log.value}` for short) leads to the client with log files."
-        ),
-        field_possible_leaps=[
-            ConfLeap.leap_client,
-            ConfLeap.leap_env,
-        ],
-        field_wizard_leaps=[
-            ConfLeap.leap_client,
-        ],
-        root_ancestor_field=None,
-        warn_if_not_wizard_able=lambda wizard_meta, state_node, file_data: None,
-        read_value=read_value_trivially,
-        validate_value=validate_value_trivially,
-        review_value=review_value_trivially,
-        write_value=write_value_trivially,
-    )
-
-    field_local_tmp_dir_rel_path = FieldWizardMeta(
-        field_name=ConfField.field_local_tmp_dir_rel_path.value,
-        field_help=lambda wizard_meta, state_node, file_data: (
-            f"Field `{ConfField.field_local_tmp_dir_rel_path.value}` (or `{PathName.path_local_tmp.value}` for short) leads to the client with temp files."
-        ),
-        field_possible_leaps=[
-            ConfLeap.leap_client,
-            ConfLeap.leap_env,
-        ],
-        field_wizard_leaps=[
-            ConfLeap.leap_client,
-        ],
-        root_ancestor_field=None,
-        warn_if_not_wizard_able=lambda wizard_meta, state_node, file_data: None,
-        read_value=read_value_trivially,
-        validate_value=validate_value_trivially,
-        review_value=review_value_trivially,
-        write_value=write_value_trivially,
-    )
-
-    field_env_build_root_dir_rel_path = FieldWizardMeta(
-        field_name=ConfField.field_env_build_root_dir_rel_path.value,
-        field_help=lambda wizard_meta, state_node, file_data: (
-            # TODO:
-            f"Field `{ConfField.field_env_build_root_dir_rel_path.value}` TODO"
-        ),
-        field_possible_leaps=[
-            ConfLeap.leap_client,
-            ConfLeap.leap_env,
-        ],
-        field_wizard_leaps=[
-            ConfLeap.leap_client,
-        ],
-        root_ancestor_field=ConfField.field_project_descriptors.value,
-        warn_if_not_wizard_able=warn_if_not_wizard_able_field_env_build_root_dir_rel_path,
-        read_value=read_field_env_build_root_dir_rel_path,
-        # TODO:
-        validate_value=validate_value_trivially,
-        # TODO:
-        review_value=review_value_trivially,
-        write_value=write_field_env_build_root_dir_rel_path,
-    )
-
-
 def init_arg_parser():
 
     suppress_internal_args: bool = True
@@ -1365,7 +932,7 @@ def init_arg_parser():
 
     arg_parser.add_argument(
         SyntaxArg.arg_reinstall,
-        type=str2bool,
+        type=str_to_bool,
         nargs="?",
         const=True,
         default=False,
@@ -1403,20 +970,20 @@ def init_arg_parser():
         help="Prime the environment to be ready to use.",
     )
     mutex_group.add_argument(
+        SyntaxArg.arg_mode_config,
+        action="store_const",
+        const=RunMode.mode_config.value,
+        dest=ParsedArg.name_run_mode.value,
+        metavar=ParsedArg.name_run_mode.value,
+        help="Print effective config.",
+    )
+    mutex_group.add_argument(
         SyntaxArg.arg_mode_check,
         action="store_const",
         const=RunMode.mode_check.value,
         dest=ParsedArg.name_run_mode.value,
         metavar=ParsedArg.name_run_mode.value,
         help="Check the environment configuration.",
-    )
-    mutex_group.add_argument(
-        SyntaxArg.arg_mode_wizard,
-        action="store_const",
-        const=RunMode.mode_wizard.value,
-        dest=ParsedArg.name_run_mode.value,
-        metavar=ParsedArg.name_run_mode.value,
-        help="Wizard through the environment configuration.",
     )
 
     mutex_group.set_defaults(run_mode=RunMode.mode_prime.value)
@@ -1446,17 +1013,6 @@ def init_arg_parser():
         help="Increase log verbosity level.",
     )
     arg_parser.add_argument(
-        SyntaxArg.arg_wizard_stage,
-        type=str,
-        choices=[wizard_stage.value for wizard_stage in WizardStage],
-        default=WizardStage.wizard_started.value,
-        help=(
-            argparse.SUPPRESS
-            if suppress_internal_args
-            else f"Used internally: specifies `{WizardStage.__name__}`."
-        ),
-    )
-    arg_parser.add_argument(
         # TODO: Remove this arg - it does not support any strong use case:
         SyntaxArg.arg_final_state,
         type=str,
@@ -1472,15 +1028,1566 @@ def init_arg_parser():
     return arg_parser
 
 
-def str2bool(v):
-    if isinstance(v, bool):
-        return v
+def str_to_bool(v: str) -> bool:
     if v.lower() in ("yes", "true", "t", "y", "1"):
         return True
-    elif v.lower() in ("no", "false", "f", "n", "0"):
+    if v.lower() in ("no", "false", "f", "n", "0"):
         return False
-    else:
-        raise argparse.ArgumentTypeError(f"[{bool.__name__}] value expected.")
+    raise argparse.ArgumentTypeError(f"[{bool.__name__}]-like value expected.")
+
+
+########################################################################################################################
+# Visitors for config nodes.
+# See: FT_19_44_42_19.effective_config.md
+
+
+class AbstractConfigVisitor:
+    """
+    Implements the visitor pattern for classed derived from `AbstractConfigNode`.
+    """
+
+    def visit_dict(
+        self,
+        dict_node: "AbstractDictNode",
+        **kwargs,
+    ) -> None:
+        pass
+
+    def visit_list(
+        self,
+        list_node: "AbstractListNode",
+        **kwargs,
+    ) -> None:
+        pass
+
+    def visit_value(
+        self,
+        value_node: "AbstractValueNode",
+        **kwargs,
+    ) -> None:
+        pass
+
+    def visit_root(
+        self,
+        root_node: "AbstractRootNode",
+        **kwargs,
+    ) -> None:
+        pass
+
+
+class RenderConfigVisitor(AbstractConfigVisitor):
+    """
+    Render a JSON-like data structure into data coded in `python` (with annotations as comments).
+
+    It renders loaded config as: FT_19_44_42_19.effective_config.md
+    """
+
+    def __init__(self):
+        self.rendered_value: str = ""
+
+    def render_node(
+        self,
+        config_node: "AbstractConfigNode",
+    ) -> str:
+        s: str = ""
+        s += " " * config_node.node_indent + os.linesep
+        s += self._render_node_annotation(config_node)
+
+        rendered_value: str = self._render_node_value(config_node)
+        if config_node.is_present:
+            s += rendered_value
+        else:
+            s += self._comment_with_indent(
+                rendered_value,
+                config_node,
+            )
+        return s
+
+    @staticmethod
+    def _render_node_annotation(
+        config_node: "AbstractConfigNode",
+    ) -> str:
+        note_text = config_node.note_text
+        if len(note_text.strip()) == 0:
+            return ""
+        annotation_lines = note_text.splitlines()
+        s = ""
+        for annotation_line in annotation_lines:
+            s += (
+                " " * config_node.node_indent
+                + f"{config_node.note_color.value}# {annotation_line}{TermColor.reset_style.value}"
+                + os.linesep
+            )
+        return s
+
+    @staticmethod
+    def _render_node_name(
+        config_node: "AbstractConfigNode",
+    ) -> str:
+        if config_node.node_name is None:
+            return ""
+        return f"{json.dumps(config_node.node_name)}: "
+
+    def _render_node_value(
+        self,
+        config_node: "AbstractConfigNode",
+    ) -> str:
+        config_node.accept_visitor(self)
+        return self.rendered_value
+
+    @staticmethod
+    def _comment_with_indent(
+        rendered_text: str,
+        config_node: "AbstractConfigNode",
+    ) -> str:
+        deactivated_lines = []
+        rendered_lines = rendered_text.splitlines()
+        for rendered_line in rendered_lines:
+            deactivated_lines.append(
+                rendered_line[: config_node.node_indent]
+                + f"{config_node.note_color.value}# "
+                + rendered_line[config_node.node_indent :]
+                + f"{TermColor.reset_style.value}"
+            )
+        return os.linesep.join(deactivated_lines)
+
+    def visit_dict(
+        self,
+        dict_node: "AbstractDictNode",
+        **kwargs,
+    ):
+        s: str = ""
+        s += (
+            " " * dict_node.node_indent
+            + self._render_node_name(dict_node)
+            + "{"
+            + os.linesep
+        )
+        for child_name, child_node in dict_node.child_nodes.items():
+            s += self.render_node(child_node) + os.linesep
+        s += " " * dict_node.node_indent + "},"
+        self.rendered_value = s
+
+    def visit_list(
+        self,
+        list_node: "AbstractListNode",
+        **kwargs,
+    ):
+        s: str = ""
+        s += (
+            " " * list_node.node_indent
+            + self._render_node_name(list_node)
+            + "["
+            + os.linesep
+        )
+        for child_node in list_node.child_nodes:
+            s += self.render_node(child_node) + os.linesep
+        s += " " * list_node.node_indent + "],"
+        self.rendered_value = s
+
+    def visit_value(
+        self,
+        value_node: "AbstractValueNode",
+        **kwargs,
+    ):
+        s: str = ""
+        if isinstance(value_node.orig_data, str):
+            s += (
+                " " * value_node.node_indent
+                + self._render_node_name(value_node)
+                # Use double-quote for `str`:
+                + f"{json.dumps(value_node.orig_data)}"
+                + ","
+            )
+        else:
+            s += (
+                " " * value_node.node_indent
+                + self._render_node_name(value_node)
+                + f"{repr(value_node.orig_data)}"
+                + ","
+            )
+        self.rendered_value = s
+
+    def visit_root(
+        self,
+        root_node: "AbstractRootNode",
+        **kwargs,
+    ):
+        # Remove the last char (which is supposed to be `,`):
+        rendered_child: str = self.render_node(root_node.child_node)[:-1]
+        s: str = ""
+        s += " " * root_node.node_indent + f"{root_node.node_name} = (" + os.linesep
+        s += rendered_child + os.linesep
+        s += " " * root_node.node_indent + ")"
+        self.rendered_value = s
+
+
+class ConfigBuilderVisitor(AbstractConfigVisitor):
+    """
+    Builds a config node and visits it to build children config nodes.
+    """
+
+    def build_config_node(
+        self,
+        orig_data: Any,
+        **kwargs,
+    ) -> "AbstractConfigNode":
+        if isinstance(orig_data, dict):
+            return self.build_dict_node(
+                orig_data=orig_data,
+                **kwargs,
+            )
+        elif isinstance(orig_data, list):
+            return self.build_list_node(
+                orig_data=orig_data,
+                **kwargs,
+            )
+        else:
+            return self.build_value_node(
+                orig_data=orig_data,
+                **kwargs,
+            )
+
+    def build_dict_node(
+        self,
+        **kwargs,
+    ) -> "AbstractDictNode":
+        kwargs.pop("is_present", None)
+        return AbstractDictNode(
+            is_present=True,
+            child_builder=self,
+            **kwargs,
+        )
+
+    def build_list_node(
+        self,
+        **kwargs,
+    ) -> "AbstractListNode":
+        kwargs.pop("is_present", None)
+        return AbstractListNode(
+            is_present=True,
+            child_builder=self,
+            **kwargs,
+        )
+
+    def build_value_node(
+        self,
+        **kwargs,
+    ) -> "AbstractValueNode":
+        kwargs.pop("is_present", None)
+        return AbstractValueNode(
+            is_present=True,
+            **kwargs,
+        )
+
+    def build_root_node(
+        self,
+        **kwargs,
+    ) -> "AbstractRootNode":
+        kwargs.pop("is_present", None)
+        return AbstractRootNode(
+            is_present=True,
+            child_builder=self,
+            **kwargs,
+        )
+
+    def visit_dict(
+        self,
+        dict_node: "AbstractDictNode",
+        **kwargs,
+    ) -> None:
+        if dict_node.orig_data is None:
+            return
+        kwargs.pop("node_name", None)
+        kwargs.pop("node_indent", None)
+        kwargs.pop("orig_data", None)
+        for field_name, field_value in dict_node.orig_data.items():
+            child_node = self.build_config_node(
+                node_name=field_name,
+                node_indent=dict_node.node_indent + AbstractConfigNode.indent_size,
+                orig_data=field_value,
+                **kwargs,
+            )
+            dict_node.child_nodes[field_name] = child_node
+
+    def visit_list(
+        self,
+        list_node: "AbstractListNode",
+        **kwargs,
+    ) -> None:
+        if list_node.orig_data is None:
+            return
+        kwargs.pop("node_name", None)
+        kwargs.pop("node_indent", None)
+        kwargs.pop("orig_data", None)
+        for list_item in list_node.orig_data:
+            child_node = self.build_config_node(
+                node_name=None,
+                node_indent=list_node.node_indent + AbstractConfigNode.indent_size,
+                orig_data=list_item,
+                **kwargs,
+            )
+            list_node.child_nodes.append(child_node)
+
+    def visit_value(
+        self,
+        value_node: "AbstractValueNode",
+        **kwargs,
+    ) -> None:
+        # Value nodes have no children.
+        pass
+
+    def visit_root(
+        self,
+        root_node: "AbstractRootNode",
+        **kwargs,
+    ) -> None:
+        if root_node.orig_data is None:
+            return
+        kwargs.pop("node_name", None)
+        kwargs.pop("node_indent", None)
+        kwargs.pop("orig_data", None)
+        root_node.child_node = self.build_config_node(
+            node_name=None,
+            node_indent=root_node.node_indent + AbstractConfigNode.indent_size,
+            orig_data=root_node.orig_data,
+            **kwargs,
+        )
+
+
+class AnnotateUnusedVisitor(AbstractConfigVisitor):
+    """
+    Annotates a config node as unused (not recursively).
+    """
+
+    def visit_dict(
+        self,
+        dict_node: "AbstractDictNode",
+        **kwargs,
+    ) -> None:
+        dict_node.note_text = f"This `dict` is not used by the `{ConfConstGeneral.name_protoprimer_package}`."
+        dict_node.note_color = TermColor.config_unused
+
+    def visit_list(
+        self,
+        list_node: "AbstractListNode",
+        **kwargs,
+    ) -> None:
+        list_node.note_text = f"This `list` is not used by the `{ConfConstGeneral.name_protoprimer_package}`."
+        list_node.note_color = TermColor.config_unused
+
+    def visit_value(
+        self,
+        value_node: "AbstractValueNode",
+        **kwargs,
+    ) -> None:
+        value_node.note_text = f"This value is not used by the `{ConfConstGeneral.name_protoprimer_package}`."
+        value_node.note_color = TermColor.config_unused
+
+    def visit_root(
+        self,
+        root_node: "AbstractRootNode",
+        **kwargs,
+    ) -> None:
+        root_node.note_text = f"This config is not used by the `{ConfConstGeneral.name_protoprimer_package}`."
+        root_node.note_color = TermColor.config_unused
+
+
+class UnusedConfigBuilderVisitor(ConfigBuilderVisitor):
+    """
+    Builds a config node (recursively) and annotates that top-level node as unused.
+    """
+
+    def __init__(
+        self,
+    ):
+        self.recursion_level: int = 0
+
+    def build_config_node(
+        self,
+        orig_data: Any,
+        **kwargs,
+    ) -> "AbstractConfigNode":
+        self.recursion_level += 1
+        config_node: AbstractConfigNode = super().build_config_node(
+            orig_data=orig_data,
+            **kwargs,
+        )
+        self.recursion_level -= 1
+        if self.recursion_level == 0:
+            # Set annotation only for the top-level node:
+            config_node.accept_visitor(AnnotateUnusedVisitor())
+        return config_node
+
+
+########################################################################################################################
+# Abstract config node types.
+# See: FT_19_44_42_19.effective_config.md
+
+
+class AbstractConfigNode(Generic[ValueType]):
+    """
+    Models a node in a JSON-like (nested) data structure.
+
+    It loads config from: FT_48_62_07_98.config_format.md
+    """
+
+    indent_size: int = 4
+
+    def __init__(
+        self,
+        node_name: str | None,
+        node_indent: int,
+        is_present: bool,
+        orig_data: ValueType | None,
+        **kwargs,
+    ):
+        self.node_name: str | None = node_name
+        self.node_indent: int = node_indent
+
+        # Unlike simply setting `orig_data` to `None`, setting `is_present` to `False`
+        # allows distinguishing between (A) a valid `None` value and (B) a missing value.
+        self.is_present: bool = is_present
+
+        self.orig_data: ValueType | None = orig_data
+
+        self.note_text: str = ""
+        self.note_color: TermColor = (
+            TermColor.config_comment if is_present else TermColor.config_missing
+        )
+
+    def accept_visitor(
+        self,
+        visitor: AbstractConfigVisitor,
+        **kwargs,
+    ) -> None:
+        """
+        Accept a `AbstractConfigVisitor`.
+        """
+        raise NotImplementedError()
+
+
+class AbstractDictNode(AbstractConfigNode[dict]):
+    """
+    Models `{ ... }` JSON-like `dict`.
+    """
+
+    def __init__(
+        self,
+        child_builder: ConfigBuilderVisitor,
+        **kwargs,
+    ):
+        super().__init__(
+            **kwargs,
+        )
+        self.child_nodes: dict[str, AbstractConfigNode] = {}
+        self.accept_visitor(
+            child_builder,
+            **kwargs,
+        )
+
+    def accept_visitor(
+        self,
+        visitor: AbstractConfigVisitor,
+        **kwargs,
+    ) -> None:
+        visitor.visit_dict(
+            self,
+            **kwargs,
+        )
+
+
+class AbstractListNode(AbstractConfigNode[list]):
+    """
+    Models `[ ... ]` JSON-like `list`.
+    """
+
+    def __init__(
+        self,
+        child_builder: ConfigBuilderVisitor,
+        **kwargs,
+    ):
+        super().__init__(
+            **kwargs,
+        )
+        self.child_nodes: list[AbstractConfigNode] = []
+        self.accept_visitor(
+            child_builder,
+            **kwargs,
+        )
+
+    def accept_visitor(
+        self,
+        visitor: AbstractConfigVisitor,
+        **kwargs,
+    ) -> None:
+        visitor.visit_list(
+            self,
+            **kwargs,
+        )
+
+
+class AbstractValueNode(AbstractConfigNode[ValueType]):
+    """
+    Models any simple value in JSON-like data structure (neither `list` nor `dict`).
+    """
+
+    def __init__(
+        self,
+        orig_data: ValueType | None,
+        **kwargs,
+    ):
+        super().__init__(
+            orig_data=orig_data,
+            **kwargs,
+        )
+        assert not isinstance(orig_data, list)
+        assert not isinstance(orig_data, dict)
+
+    def accept_visitor(
+        self,
+        visitor: AbstractConfigVisitor,
+        **kwargs,
+    ) -> None:
+        visitor.visit_value(
+            self,
+            **kwargs,
+        )
+
+
+class AbstractRootNode(AbstractConfigNode[ValueType]):
+    """
+    Wraps any given `child_node` as `node_name = ( child_node )`.
+
+    Syntactically, it represents an assignment to the `node_name` var and
+    allows accessing the assigned data via `compile_effective_config`.
+    """
+
+    def __init__(
+        self,
+        child_builder: ConfigBuilderVisitor,
+        **kwargs,
+    ):
+        super().__init__(
+            **kwargs,
+        )
+        self.child_node: AbstractConfigNode | None = None
+        self.accept_visitor(
+            child_builder,
+            **kwargs,
+        )
+
+    def accept_visitor(
+        self,
+        visitor: AbstractConfigVisitor,
+        **kwargs,
+    ) -> None:
+        visitor.visit_root(
+            self,
+            **kwargs,
+        )
+
+    def compile_effective_config(
+        self,
+    ) -> Any:
+        """
+        Produces rendered config and compiles it to access data.
+        """
+        generated_code = RenderConfigVisitor().render_node(self)
+        # TODO: Instead, maybe configure rendering without colors?
+        generated_code = self._erase_annotation_colors(generated_code)
+        compiled_code: CodeType = compile(generated_code, "<string>", "exec")
+        exec_namespace = {}
+        exec(compiled_code, exec_namespace)
+        return exec_namespace[self.node_name]
+
+    @staticmethod
+    def _erase_annotation_colors(
+        generated_code: str,
+    ):
+        for term_color in [
+            TermColor.config_comment,
+            TermColor.config_missing,
+            TermColor.config_unused,
+            TermColor.reset_style,
+        ]:
+            generated_code = generated_code.replace(term_color.value, "")
+        return generated_code
+
+
+class AbstractConfLeapRootNode(AbstractRootNode):
+    """
+    Base implementation for all `ConfLeap.*`.
+    """
+
+    def __init__(
+        self,
+        conf_leap: ConfLeap,
+        child_builder: ConfigBuilderVisitor,
+        **kwargs,
+    ):
+        super().__init__(
+            node_name=conf_leap.name,
+            is_present=True,
+            child_builder=child_builder,
+            **kwargs,
+        )
+
+
+class AbstractConfLeapNodeBuilder(ConfigBuilderVisitor):
+
+    @staticmethod
+    def _create_used_dict_field(
+        dict_node: AbstractDictNode,
+        field_name: str,
+        node_class: type,
+        conf_leap: ConfLeap,
+        **kwargs,
+    ) -> AbstractDictNode:
+        field_name = field_name
+        kwargs.pop("is_present", None)
+        kwargs.pop("orig_data", None)
+        kwargs.pop("node_name", None)
+        kwargs.pop("node_indent", None)
+        field_node: AbstractConfigNode = node_class(
+            node_name=field_name,
+            node_indent=dict_node.node_indent + AbstractConfigNode.indent_size,
+            is_present=(field_name in dict_node.orig_data),
+            orig_data=dict_node.orig_data.get(field_name, None),
+            conf_leap=conf_leap,
+            **kwargs,
+        )
+        dict_node.child_nodes[field_name] = field_node
+        return field_node
+
+    def _create_common_fields(
+        self,
+        dict_node: AbstractDictNode,
+        conf_leap: ConfLeap,
+    ):
+        # Common overridable `global` and `local` fields: FT_23_37_64_44.conf_dst.md
+
+        self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=ConfField.field_required_python_file_abs_path.value,
+            node_class=Node_field_required_python_file_abs_path,
+            conf_leap=conf_leap,
+        )
+
+        self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=ConfField.field_local_venv_dir_rel_path.value,
+            node_class=Node_field_local_venv_dir_rel_path,
+            conf_leap=conf_leap,
+        )
+
+        self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=ConfField.field_local_log_dir_rel_path.value,
+            node_class=Node_field_local_log_dir_rel_path,
+            conf_leap=conf_leap,
+        )
+
+        self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=ConfField.field_local_tmp_dir_rel_path.value,
+            node_class=Node_field_local_tmp_dir_rel_path,
+            conf_leap=conf_leap,
+        )
+
+        self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=ConfField.field_local_cache_dir_rel_path.value,
+            node_class=Node_field_local_cache_dir_rel_path,
+            conf_leap=conf_leap,
+        )
+
+        self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=ConfField.field_package_driver.value,
+            node_class=Node_field_package_driver,
+            conf_leap=conf_leap,
+        )
+
+        self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=ConfField.field_project_descriptors.value,
+            node_class=Node_field_project_descriptors,
+            conf_leap=conf_leap,
+        )
+
+    @staticmethod
+    def _create_unused_dict_fields(
+        dict_node: AbstractDictNode,
+    ):
+        for field_name, field_value in dict_node.orig_data.items():
+
+            if field_name not in dict_node.child_nodes:
+                dict_node.child_nodes[
+                    field_name
+                ] = UnusedConfigBuilderVisitor().build_config_node(
+                    node_name=field_name,
+                    node_indent=dict_node.node_indent + AbstractConfigNode.indent_size,
+                    orig_data=field_value,
+                )
+
+
+class AbstractCommonField:
+
+    def __init__(
+        self,
+        conf_leap: ConfLeap,
+        **kwargs,
+    ):
+        self.conf_leap: ConfLeap = conf_leap
+
+        self.common_field_note: str
+        if conf_leap == ConfLeap.leap_client:
+            self.common_field_note = ConfConstGeneral.common_field_global_note
+        else:
+            self.common_field_note = ConfConstGeneral.common_field_local_note
+
+
+########################################################################################################################
+# `ConfLeap.leap_input` node types.
+# See: FT_19_44_42_19.effective_config.md
+
+
+# noinspection PyPep8Naming
+class Builder_RootNode_input(AbstractConfLeapNodeBuilder):
+
+    def visit_dict(
+        self,
+        dict_node: AbstractDictNode,
+        **kwargs,
+    ) -> None:
+
+        conf_leap = ConfLeap.leap_input
+
+        field_node: AbstractConfigNode
+
+        field_node = self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=EnvState.state_input_proto_code_file_abs_path_eval_finalized.name,
+            node_class=AbstractValueNode,
+            conf_leap=conf_leap,
+            **kwargs,
+        )
+        field_node.note_text = (
+            f"Value `{EnvState.state_input_proto_code_file_abs_path_eval_finalized.name}` is an absolute path to `{ConfConstGeneral.name_proto_code}`.\n"
+            f"It allows resolving all other relative paths (via `{PathName.path_ref_root.value}` - see field `{ConfField.field_primer_ref_root_dir_rel_path.value}`).\n"
+        )
+
+        field_node = self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=EnvState.state_input_proto_conf_primer_file_abs_path_eval_finalized.name,
+            node_class=AbstractValueNode,
+            conf_leap=conf_leap,
+            **kwargs,
+        )
+        # TODO: Link to `ConfLeap.leap_derived` fields.
+        field_node.note_text = (
+            f"Value `{EnvState.state_input_proto_conf_primer_file_abs_path_eval_finalized.name}` is an absolute path to `{ConfLeap.leap_primer}` config file.\n"
+            f"The config file is selected from the list of possible candidates (whichever is found first, replacing extension to `.{ConfConstInput.conf_file_ext}`):\n"
+            f"*   basename of the entry script,\n"
+            f"*   basename of the `{ConfConstGeneral.name_proto_code}` file,\n"
+            f"*   default `{ConfConstInput.default_file_basename_conf_primer}`.\n"
+            f"Note that the selected config file basename is subsequently re-used for others:\n"
+            f"*   see `{EnvState.state_primer_conf_client_file_abs_path_eval_finalized.name}` for `{ConfLeap.leap_client.name}`,\n"
+            f"*   see `{EnvState.state_client_conf_env_file_abs_path_eval_finalized.name}` for `{ConfLeap.leap_env.name}`.\n"
+        )
+
+        self._create_unused_dict_fields(dict_node)
+
+
+# noinspection PyPep8Naming
+class RootNode_input(AbstractConfLeapRootNode):
+    """
+    Root node for `ConfLeap.leap_input`.
+    """
+
+    def __init__(
+        self,
+        **kwargs,
+    ):
+        super().__init__(
+            conf_leap=ConfLeap.leap_input,
+            child_builder=Builder_RootNode_input(),
+            **kwargs,
+        )
+        self.note_text = (
+            f"The `{ConfLeap.leap_input.name}` data is taken from the `{ConfConstGeneral.name_proto_code}` process input (not configured in files):\n"
+            f"*   CLI args, environment variables, current directory, ...\n"
+            f"*   combination of the above with applied defaults.\n"
+        )
+
+
+########################################################################################################################
+# `ConfLeap.leap_primer` node types.
+# See: FT_19_44_42_19.effective_config.md
+
+
+# noinspection PyPep8Naming
+class Builder_RootNode_primer(AbstractConfLeapNodeBuilder):
+
+    def __init__(
+        self,
+        state_input_proto_conf_primer_file_abs_path_eval_finalized: str,
+    ):
+        self.state_input_proto_conf_primer_file_abs_path_eval_finalized: str = (
+            state_input_proto_conf_primer_file_abs_path_eval_finalized
+        )
+
+    def visit_dict(
+        self,
+        dict_node: AbstractDictNode,
+        **kwargs,
+    ) -> None:
+        self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=ConfField.field_primer_ref_root_dir_rel_path.value,
+            node_class=Node_field_primer_ref_root_dir_rel_path,
+            state_input_proto_conf_primer_file_abs_path_eval_finalized=self.state_input_proto_conf_primer_file_abs_path_eval_finalized,
+            conf_leap=ConfLeap.leap_primer,
+        )
+
+        self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=ConfField.field_primer_conf_client_dir_rel_path.value,
+            node_class=Node_field_primer_conf_client_dir_rel_path,
+            state_input_proto_conf_primer_file_abs_path_eval_finalized=self.state_input_proto_conf_primer_file_abs_path_eval_finalized,
+            conf_leap=ConfLeap.leap_primer,
+        )
+
+        self._create_unused_dict_fields(dict_node)
+
+
+# noinspection PyPep8Naming
+class RootNode_primer(AbstractConfLeapRootNode):
+    """
+    Root node for `ConfLeap.leap_primer`.
+    """
+
+    def __init__(
+        self,
+        state_input_proto_conf_primer_file_abs_path_eval_finalized: str,
+        **kwargs,
+    ):
+        super().__init__(
+            conf_leap=ConfLeap.leap_primer,
+            child_builder=Builder_RootNode_primer(
+                state_input_proto_conf_primer_file_abs_path_eval_finalized=state_input_proto_conf_primer_file_abs_path_eval_finalized,
+            ),
+            **kwargs,
+        )
+        self.state_input_proto_conf_primer_file_abs_path_eval_finalized: str = (
+            state_input_proto_conf_primer_file_abs_path_eval_finalized
+        )
+        self.note_text = f"The `{ConfLeap.leap_primer.name}` data is loaded from the [{self.state_input_proto_conf_primer_file_abs_path_eval_finalized}] file."
+
+
+# noinspection PyPep8Naming
+class Node_field_primer_ref_root_dir_rel_path(AbstractValueNode[str]):
+
+    def __init__(
+        self,
+        state_input_proto_conf_primer_file_abs_path_eval_finalized: str,
+        **kwargs,
+    ):
+        super().__init__(
+            **kwargs,
+        )
+        self.state_input_proto_conf_primer_file_abs_path_eval_finalized: str = (
+            state_input_proto_conf_primer_file_abs_path_eval_finalized
+        )
+        self.note_text = (
+            f"Field `{ConfField.field_primer_ref_root_dir_rel_path.value}` points to the dir called `{PathName.path_ref_root.value}`.\n"
+            f"The path is relative to the `{ConfConstGeneral.name_proto_code}` file [{self.state_input_proto_conf_primer_file_abs_path_eval_finalized}].\n"
+            f"Normally, the `{PathName.path_ref_root.value}` dir is the client repo root, but it can be anything.\n"
+            f"See `{EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name}` in `{ConfLeap.leap_derived.name}` -\n"
+            f"the derived abs path is the base path for all the configured relative paths (except for this field itself, obviously).\n"
+        )
+
+
+# noinspection PyPep8Naming
+class Node_field_primer_conf_client_dir_rel_path(AbstractValueNode[str]):
+
+    def __init__(
+        self,
+        state_input_proto_conf_primer_file_abs_path_eval_finalized: str,
+        **kwargs,
+    ):
+        super().__init__(
+            **kwargs,
+        )
+        self.state_input_proto_conf_primer_file_abs_path_eval_finalized: str = (
+            state_input_proto_conf_primer_file_abs_path_eval_finalized
+        )
+        self.note_text = (
+            f"Field `{ConfField.field_primer_conf_client_dir_rel_path.value}` points to the global config dir (as opposed to local config dir `{ConfField.field_client_link_name_dir_rel_path.value}`).\n"
+            f"{ConfConstGeneral.relative_path_field_note}\n"
+            f"See `{EnvState.state_primer_conf_client_dir_abs_path_eval_finalized.name}` in `{ConfLeap.leap_derived.name}` -\n"
+            f"normally, the resolved global config dir contains all other global client config files.\n"
+        )
+
+
+########################################################################################################################
+# `ConfLeap.leap_client` node types.
+# See: FT_19_44_42_19.effective_config.md
+
+
+# noinspection PyPep8Naming
+class Builder_RootNode_client(AbstractConfLeapNodeBuilder):
+
+    def visit_dict(
+        self,
+        dict_node: AbstractDictNode,
+        **kwargs,
+    ) -> None:
+
+        conf_leap = ConfLeap.leap_client
+
+        self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=ConfField.field_client_link_name_dir_rel_path.value,
+            node_class=Node_field_client_link_name_dir_rel_path,
+            conf_leap=conf_leap,
+            **kwargs,
+        )
+
+        self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=ConfField.field_client_default_env_dir_rel_path.value,
+            node_class=Node_field_client_default_env_dir_rel_path,
+            conf_leap=conf_leap,
+            **kwargs,
+        )
+
+        self._create_common_fields(
+            dict_node=dict_node,
+            conf_leap=conf_leap,
+        )
+
+        self._create_unused_dict_fields(dict_node)
+
+
+# noinspection PyPep8Naming
+class RootNode_client(AbstractConfLeapRootNode):
+    """
+    Root node for `ConfLeap.leap_client`.
+    """
+
+    def __init__(
+        self,
+        state_primer_conf_client_file_abs_path_eval_finalized: str,
+        **kwargs,
+    ):
+        super().__init__(
+            conf_leap=ConfLeap.leap_client,
+            child_builder=Builder_RootNode_client(),
+            **kwargs,
+        )
+        self.state_primer_conf_client_file_abs_path_eval_finalized: str = (
+            state_primer_conf_client_file_abs_path_eval_finalized
+        )
+        self.note_text = f"The `{ConfLeap.leap_client.name}` data is loaded from the [{self.state_primer_conf_client_file_abs_path_eval_finalized}] file."
+
+
+# noinspection PyPep8Naming
+class Node_field_client_link_name_dir_rel_path(AbstractValueNode[str]):
+
+    def __init__(
+        self,
+        **kwargs,
+    ):
+        super().__init__(
+            **kwargs,
+        )
+        self.note_text = (
+            f"Field `{ConfField.field_client_link_name_dir_rel_path.value}` points to local config dir (as opposed to the global config dir `{ConfField.field_primer_conf_client_dir_rel_path.value}`).\n"
+            f"{ConfConstGeneral.relative_path_field_note}\n"
+            f"The basename of this path is a symlink set to the actual dir with environment-specific config.\n"
+            f"If the symlink does not exist yet, its target is set from:\n"
+            f"*   either field `{ConfField.field_client_default_env_dir_rel_path.value}`,\n"
+            f"*   or arg `{SyntaxArg.arg_env}` which can also be used to re-set the symlink target to a new path.\n"
+            f"See `{EnvState.state_primer_conf_client_dir_abs_path_eval_finalized.name}` in `{ConfLeap.leap_derived.name}` -\n"
+            f"normally, the resolved local config dir contains all local environment-specific config files.\n"
+        )
+
+
+# noinspection PyPep8Naming
+class Node_field_client_default_env_dir_rel_path(AbstractValueNode[str]):
+
+    def __init__(
+        self,
+        **kwargs,
+    ):
+        super().__init__(
+            **kwargs,
+        )
+        self.note_text = (
+            f"Field `{ConfField.field_client_default_env_dir_rel_path.value}` is the default path where `{ConfField.field_client_link_name_dir_rel_path.value}` symlink can point to.\n"
+            f"{ConfConstGeneral.relative_path_field_note}\n"
+            f"The path is ignored when the `{ConfField.field_client_link_name_dir_rel_path.value}` symlink already exists.\n"
+            f"Arg `{SyntaxArg.arg_env}` overrides this `{ConfField.field_client_default_env_dir_rel_path.value}` field.\n"
+        )
+
+
+# noinspection PyPep8Naming
+class Node_field_required_python_file_abs_path(
+    AbstractValueNode[str], AbstractCommonField
+):
+
+    def __init__(
+        self,
+        **kwargs,
+    ):
+        super().__init__(
+            **kwargs,
+        )
+        AbstractCommonField.__init__(
+            self,
+            **kwargs,
+        )
+        if self.conf_leap == ConfLeap.leap_client:
+            self.note_text = (
+                f"Field `{ConfField.field_required_python_file_abs_path.value}` selects `python` version.\n"
+                f"The value specifies absolute path to `python` interpreter which is used to create `venv`.\n"
+                f"{self.common_field_note}\n"
+            )
+        elif self.conf_leap == ConfLeap.leap_env:
+            self.note_text = f"{self.common_field_note}\n"
+
+
+# noinspection PyPep8Naming
+class Node_field_local_venv_dir_rel_path(AbstractValueNode[str], AbstractCommonField):
+
+    def __init__(
+        self,
+        **kwargs,
+    ):
+        super().__init__(
+            **kwargs,
+        )
+        AbstractCommonField.__init__(
+            self,
+            **kwargs,
+        )
+        if self.conf_leap == ConfLeap.leap_client:
+            self.note_text = (
+                f"Field `{ConfField.field_local_venv_dir_rel_path.value}` points to the dir where `venv` (`python` virtual environment) is created.\n"
+                f"{ConfConstGeneral.relative_path_field_note}\n"
+                f"{self.common_field_note}\n"
+            )
+        elif self.conf_leap == ConfLeap.leap_env:
+            self.note_text = f"{self.common_field_note}\n"
+
+
+# noinspection PyPep8Naming
+class Node_field_local_log_dir_rel_path(AbstractValueNode[str], AbstractCommonField):
+
+    def __init__(
+        self,
+        **kwargs,
+    ):
+        super().__init__(
+            **kwargs,
+        )
+        AbstractCommonField.__init__(
+            self,
+            **kwargs,
+        )
+        if self.conf_leap == ConfLeap.leap_client:
+            self.note_text = (
+                f"Field `{ConfField.field_local_log_dir_rel_path.value}` points to the dir with log files created for each script execution.\n"
+                f"{ConfConstGeneral.relative_path_field_note}\n"
+                f"{self.common_field_note}\n"
+            )
+        elif self.conf_leap == ConfLeap.leap_env:
+            self.note_text = f"{self.common_field_note}\n"
+
+
+# noinspection PyPep8Naming
+class Node_field_local_tmp_dir_rel_path(AbstractValueNode[str], AbstractCommonField):
+
+    def __init__(
+        self,
+        **kwargs,
+    ):
+        super().__init__(
+            **kwargs,
+        )
+        AbstractCommonField.__init__(
+            self,
+            **kwargs,
+        )
+        if self.conf_leap == ConfLeap.leap_client:
+            self.note_text = (
+                f"Field `{ConfField.field_local_tmp_dir_rel_path.value}` points to the dir with temporary files created for some commands.\n"
+                f"{ConfConstGeneral.relative_path_field_note}\n"
+                f"{self.common_field_note}\n"
+            )
+        elif self.conf_leap == ConfLeap.leap_env:
+            self.note_text = f"{self.common_field_note}\n"
+
+
+# noinspection PyPep8Naming
+class Node_field_local_cache_dir_rel_path(AbstractValueNode[str], AbstractCommonField):
+
+    def __init__(
+        self,
+        **kwargs,
+    ):
+        super().__init__(
+            **kwargs,
+        )
+        AbstractCommonField.__init__(
+            self,
+            **kwargs,
+        )
+        if self.conf_leap == ConfLeap.leap_client:
+            self.note_text = (
+                f"Field `{ConfField.field_local_cache_dir_rel_path.value}` points to the dir with cached files created for some commands.\n"
+                f"{ConfConstGeneral.relative_path_field_note}\n"
+                f"{self.common_field_note}\n"
+            )
+        elif self.conf_leap == ConfLeap.leap_env:
+            self.note_text = f"{self.common_field_note}\n"
+
+
+# noinspection PyPep8Naming
+class Node_field_package_driver(AbstractValueNode[str], AbstractCommonField):
+
+    def __init__(
+        self,
+        **kwargs,
+    ):
+        super().__init__(
+            **kwargs,
+        )
+        AbstractCommonField.__init__(
+            self,
+            **kwargs,
+        )
+        if self.conf_leap == ConfLeap.leap_client:
+            self.note_text = (
+                f"Field `{ConfField.field_package_driver.value}` selects a tool to manage packages:\n"
+                f'*   specify "{PackageDriverType.driver_pip.name}" to use native `pip`,\n'
+                f'*   specify "{PackageDriverType.driver_uv.name}" to use fast `uv`.\n'
+                f"{self.common_field_note}\n"
+            )
+        elif self.conf_leap == ConfLeap.leap_env:
+            self.note_text = f"{self.common_field_note}\n"
+
+
+# noinspection PyPep8Naming
+class Builder_Node_field_project_descriptors(AbstractConfLeapNodeBuilder):
+
+    def build_dict_node(
+        self,
+        node_name: str | None,
+        node_indent: int,
+        orig_data: dict,
+        conf_leap: ConfLeap,
+        **kwargs,
+    ) -> "AbstractDictNode":
+        return Node_project_descriptor(
+            node_indent=node_indent,
+            orig_data=orig_data,
+            conf_leap=conf_leap,
+            **kwargs,
+        )
+
+
+# noinspection PyPep8Naming
+class Node_field_project_descriptors(AbstractListNode, AbstractCommonField):
+
+    def __init__(
+        self,
+        **kwargs,
+    ):
+        super().__init__(
+            child_builder=Builder_Node_field_project_descriptors(),
+            **kwargs,
+        )
+        AbstractCommonField.__init__(
+            self,
+            **kwargs,
+        )
+        if self.conf_leap == ConfLeap.leap_client:
+            self.note_text = (
+                f"Field `{ConfField.field_project_descriptors.value}` lists `python` projects and their installation details.\n"
+                f"{self.common_field_note}\n"
+                # See: UC_78_58_06_54.no_stray_packages.md:
+                f"Note that the `{ConfConstGeneral.name_protoprimer_package}` does not manage package dependencies itself.\n"
+                f"Instead, the `{ConfConstGeneral.name_protoprimer_package}` relies on `{ConfConstClient.default_pyproject_toml_basename}` file per `python` project to specify these dependencies.\n"
+                f"See `{EnvState.state_derived_project_descriptors_eval_finalized.name}` in `{ConfLeap.leap_derived.name}`.\n"
+            )
+        elif self.conf_leap == ConfLeap.leap_env:
+            self.note_text = f"{self.common_field_note}\n"
+        elif self.conf_leap == ConfLeap.leap_derived:
+            self.note_text = f"{ConfConstGeneral.func_note_derived_based_on_common(ConfField.field_project_descriptors.value)}\n"
+
+
+# noinspection PyPep8Naming
+class Builder_Node_project_descriptor(AbstractConfLeapNodeBuilder):
+
+    def __init__(
+        self,
+        conf_leap: ConfLeap,
+        **kwargs,
+    ):
+        super().__init__(
+            **kwargs,
+        )
+        self.conf_leap: ConfLeap = conf_leap
+
+    def visit_dict(
+        self,
+        dict_node: AbstractDictNode,
+        **kwargs,
+    ) -> None:
+        self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=ConfField.field_build_root_dir_rel_path.value,
+            node_class=Node_field_build_root_dir_rel_path,
+            conf_leap=self.conf_leap,
+            **kwargs,
+        )
+
+        self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=ConfField.field_install_extras.value,
+            node_class=Node_field_install_extras,
+            conf_leap=self.conf_leap,
+            **kwargs,
+        )
+
+        self._create_unused_dict_fields(dict_node)
+
+
+# noinspection PyPep8Naming
+class Node_project_descriptor(AbstractDictNode):
+
+    def __init__(
+        self,
+        conf_leap: ConfLeap,
+        **kwargs,
+    ):
+        kwargs.pop("node_name", None)
+        kwargs.pop("is_present", None)
+        super().__init__(
+            node_name=None,
+            is_present=True,
+            child_builder=Builder_Node_project_descriptor(
+                conf_leap=conf_leap,
+            ),
+            **kwargs,
+        )
+
+
+# noinspection PyPep8Naming
+class Node_field_build_root_dir_rel_path(AbstractValueNode[str], AbstractCommonField):
+
+    def __init__(
+        self,
+        **kwargs,
+    ):
+        super().__init__(
+            **kwargs,
+        )
+        AbstractCommonField.__init__(
+            self,
+            **kwargs,
+        )
+        if self.conf_leap in [
+            ConfLeap.leap_client,
+            ConfLeap.leap_derived,
+        ]:
+            self.note_text = (
+                f"This is similar to specifying the dir of `{ConfConstClient.default_pyproject_toml_basename}` for `pip`:\n"
+                f"pip install path/to/project\n"
+                f"{ConfConstGeneral.relative_path_field_note}\n"
+            )
+
+
+# noinspection PyPep8Naming
+class Node_field_install_extras(AbstractListNode, AbstractCommonField):
+
+    def __init__(
+        self,
+        **kwargs,
+    ):
+        super().__init__(
+            child_builder=ConfigBuilderVisitor(),
+            **kwargs,
+        )
+        AbstractCommonField.__init__(
+            self,
+            **kwargs,
+        )
+        if self.conf_leap in [
+            ConfLeap.leap_client,
+            ConfLeap.leap_derived,
+        ]:
+            self.note_text = (
+                f"This is similar to specifying a list of `extra_item`-s per `path/to/project` for `pip`:\n"
+                f"pip install path/to/project[extra_item_1,extra_item_2,...]\n"
+            )
+
+
+########################################################################################################################
+# `ConfLeap.leap_env` node types.
+# See: FT_19_44_42_19.effective_config.md
+
+
+# noinspection PyPep8Naming
+class Builder_RootNode_env(AbstractConfLeapNodeBuilder):
+
+    def visit_dict(
+        self,
+        dict_node: AbstractDictNode,
+        **kwargs,
+    ) -> None:
+
+        self._create_common_fields(
+            dict_node=dict_node,
+            conf_leap=ConfLeap.leap_env,
+        )
+
+        self._create_unused_dict_fields(dict_node)
+
+
+# noinspection PyPep8Naming
+class RootNode_env(AbstractConfLeapRootNode):
+    """
+    Root node for `ConfLeap.leap_env`.
+    """
+
+    def __init__(
+        self,
+        state_client_conf_env_file_abs_path_eval_finalized: str,
+        **kwargs,
+    ):
+        super().__init__(
+            conf_leap=ConfLeap.leap_env,
+            child_builder=Builder_RootNode_env(),
+            **kwargs,
+        )
+        self.state_client_conf_env_file_abs_path_eval_finalized: str = (
+            state_client_conf_env_file_abs_path_eval_finalized
+        )
+        self.note_text = f"The `{ConfLeap.leap_env.name}` data is loaded from the [{self.state_client_conf_env_file_abs_path_eval_finalized}] file."
+
+
+########################################################################################################################
+# `ConfLeap.leap_derived` node types.
+# See: FT_19_44_42_19.effective_config.md
+
+
+# noinspection PyPep8Naming
+class Builder_RootNode_derived(AbstractConfLeapNodeBuilder):
+
+    def visit_dict(
+        self,
+        dict_node: AbstractDictNode,
+        **kwargs,
+    ) -> None:
+
+        conf_leap = ConfLeap.leap_derived
+
+        field_node: AbstractConfigNode
+
+        # ===
+        # `ConfLeap.leap_input`
+
+        field_node = self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=EnvState.state_input_proto_code_file_abs_path_eval_finalized.name,
+            node_class=AbstractValueNode,
+            conf_leap=conf_leap,
+            **kwargs,
+        )
+        field_node.note_text = f"{ConfConstGeneral.func_note_derived_based_on_conf_leap_field(EnvState.state_input_proto_code_file_abs_path_eval_finalized.name, ConfLeap.leap_input)}\n"
+
+        field_node = self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=EnvState.state_input_proto_conf_primer_file_abs_path_eval_finalized.name,
+            node_class=AbstractValueNode,
+            conf_leap=conf_leap,
+            **kwargs,
+        )
+        field_node.note_text = f"{ConfConstGeneral.func_note_derived_based_on_conf_leap_field(EnvState.state_input_proto_conf_primer_file_abs_path_eval_finalized.name, ConfLeap.leap_input)}\n"
+
+        # ===
+        # `ConfLeap.leap_primer`
+
+        field_node = self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name,
+            node_class=AbstractValueNode,
+            conf_leap=conf_leap,
+            **kwargs,
+        )
+        field_node.note_text = f"{ConfConstGeneral.func_note_derived_based_on_conf_leap_field(ConfField.field_primer_ref_root_dir_rel_path.value, ConfLeap.leap_primer)}\n"
+
+        field_node = self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=EnvState.state_primer_conf_client_dir_abs_path_eval_finalized.name,
+            node_class=AbstractValueNode,
+            conf_leap=conf_leap,
+            **kwargs,
+        )
+        field_node.note_text = f"{ConfConstGeneral.func_note_derived_based_on_conf_leap_field(ConfField.field_primer_conf_client_dir_rel_path.value, ConfLeap.leap_primer)}\n"
+
+        field_node = self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=EnvState.state_primer_conf_client_file_abs_path_eval_finalized.name,
+            node_class=AbstractValueNode,
+            conf_leap=conf_leap,
+            **kwargs,
+        )
+        field_node.note_text = (
+            # TODO: It is not derived from just this:
+            #       *   dirname is from `field_primer_conf_client_dir_rel_path`
+            #       *   basename is from `state_input_proto_conf_primer_file_abs_path_eval_finalized`
+            f"{ConfConstGeneral.func_note_derived_based_on_conf_leap_field(EnvState.state_input_proto_conf_primer_file_abs_path_eval_finalized.name, ConfLeap.leap_input)}\n"
+        )
+
+        # ===
+        # `ConfLeap.leap_client`
+
+        field_node = self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=EnvState.state_client_local_env_conf_dir_rel_path_eval_finalized.name,
+            node_class=AbstractValueNode,
+            conf_leap=conf_leap,
+            **kwargs,
+        )
+        field_node.note_text = (
+            # TODO: Either default or --env arg:
+            f"{ConfConstGeneral.func_note_derived_based_on_conf_leap_field(ConfField.field_client_default_env_dir_rel_path.value, ConfLeap.leap_client)}\n"
+        )
+
+        field_node = self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=EnvState.state_client_conf_env_dir_abs_path_eval_finalized.name,
+            node_class=AbstractValueNode,
+            conf_leap=conf_leap,
+            **kwargs,
+        )
+        field_node.note_text = f"{ConfConstGeneral.func_note_derived_based_on_conf_leap_field(ConfField.field_client_link_name_dir_rel_path.value, ConfLeap.leap_client)}\n"
+
+        field_node = self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=EnvState.state_client_conf_env_file_abs_path_eval_finalized.name,
+            node_class=AbstractValueNode,
+            conf_leap=conf_leap,
+            **kwargs,
+        )
+        field_node.note_text = (
+            # TODO: It is not derived from just this:
+            #       *   dirname is from `field_client_link_name_dir_rel_path`
+            #       *   basename is from `state_input_proto_conf_primer_file_abs_path_eval_finalized`
+            f"{ConfConstGeneral.func_note_derived_based_on_conf_leap_field(EnvState.state_input_proto_conf_primer_file_abs_path_eval_finalized.name, ConfLeap.leap_input)}\n"
+        )
+
+        # ===
+        # `ConfLeap.leap_env`
+        # nothing specific
+
+        # ===
+        # `ConfLeap.leap_derived`
+
+        field_node = self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=EnvState.state_derived_required_python_file_abs_path_eval_finalized.name,
+            node_class=AbstractValueNode,
+            conf_leap=conf_leap,
+            **kwargs,
+        )
+        field_node.note_text = f"{ConfConstGeneral.func_note_derived_based_on_common(ConfField.field_required_python_file_abs_path.value)}\n"
+
+        field_node = self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=EnvState.state_derived_local_venv_dir_abs_path_eval_finalized.name,
+            node_class=AbstractValueNode,
+            conf_leap=conf_leap,
+            **kwargs,
+        )
+        field_node.note_text = f"{ConfConstGeneral.func_note_derived_based_on_common(ConfField.field_local_venv_dir_rel_path.value)}\n"
+
+        field_node = self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=EnvState.state_derived_local_log_dir_abs_path_eval_finalized.name,
+            node_class=AbstractValueNode,
+            conf_leap=conf_leap,
+            **kwargs,
+        )
+        field_node.note_text = f"{ConfConstGeneral.func_note_derived_based_on_common(ConfField.field_local_log_dir_rel_path.value)}\n"
+
+        field_node = self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=EnvState.state_derived_local_tmp_dir_abs_path_eval_finalized.name,
+            node_class=AbstractValueNode,
+            conf_leap=conf_leap,
+            **kwargs,
+        )
+        field_node.note_text = f"{ConfConstGeneral.func_note_derived_based_on_common(ConfField.field_local_tmp_dir_rel_path.value)}\n"
+
+        field_node = self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=EnvState.state_derived_local_cache_dir_abs_path_eval_finalized.name,
+            node_class=AbstractValueNode,
+            conf_leap=conf_leap,
+            **kwargs,
+        )
+        field_node.note_text = f"{ConfConstGeneral.func_note_derived_based_on_common(ConfField.field_local_cache_dir_rel_path.value)}\n"
+
+        field_node = self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=EnvState.state_derived_package_driver_eval_finalized.name,
+            node_class=AbstractValueNode,
+            conf_leap=conf_leap,
+            **kwargs,
+        )
+        field_node.note_text = f"{ConfConstGeneral.func_note_derived_based_on_common(ConfField.field_package_driver.value)}\n"
+
+        self._create_used_dict_field(
+            dict_node=dict_node,
+            field_name=EnvState.state_derived_project_descriptors_eval_finalized.name,
+            node_class=Node_field_project_descriptors,
+            conf_leap=conf_leap,
+            **kwargs,
+        )
+
+        self._create_unused_dict_fields(dict_node)
+
+
+# noinspection PyPep8Naming
+class RootNode_derived(AbstractConfLeapRootNode):
+    """
+    Root node for `ConfLeap.leap_derived`.
+    """
+
+    def __init__(
+        self,
+        **kwargs,
+    ):
+        super().__init__(
+            conf_leap=ConfLeap.leap_derived,
+            child_builder=Builder_RootNode_derived(),
+            **kwargs,
+        )
+        self.note_text = (
+            f"The `{ConfLeap.leap_derived.name}` data is derived from other data - it is computed by:\n"
+            f"*   applying defaults to missing field values\n"
+            f"*   combining with other field values\n"
+            f"Effectively, this is what ultimately used by the `{ConfConstGeneral.name_protoprimer_package}`.\n"
+        )
+
+
+########################################################################################################################
 
 
 class RunStrategy:
@@ -1498,6 +2605,9 @@ class RunStrategy:
 
 
 class ExitCodeReporter(RunStrategy):
+    """
+    This strategy requires state to return `int` value (as exit code).
+    """
 
     def __init__(
         self,
@@ -1521,6 +2631,9 @@ class ExitCodeReporter(RunStrategy):
         exit_code: int = state_node.eval_own_state()
         assert type(exit_code) is int, "`exit_code` must be an `int`"
         sys.exit(exit_code)
+
+
+########################################################################################################################
 
 
 class StateNode(Generic[ValueType]):
@@ -1621,11 +2734,11 @@ class AbstractCachingStateNode(StateNode[ValueType]):
         raise NotImplementedError()
 
 
-class AbstractMergedFieldCachingStateNode(AbstractCachingStateNode[ValueType]):
+class AbstractOverriddenFieldCachingStateNode(AbstractCachingStateNode[ValueType]):
     """
-    Base class which merges field values from `ConfLeap.leap_client` and `ConfLeap.leap_env`.
+    Base class which overrides field values from `ConfLeap.leap_client` and `ConfLeap.leap_env`.
 
-    See: FT_00_22_19_59.merged_config.md
+    See: FT_00_22_19_59.derived_config.md
     """
 
     def __init__(
@@ -1641,32 +2754,39 @@ class AbstractMergedFieldCachingStateNode(AbstractCachingStateNode[ValueType]):
             state_name=state_name,
             auto_bootstrap_parents=auto_bootstrap_parents,
         )
-        # FT_00_22_19_59.merged_config.md: merges values from both files:
+        # FT_00_22_19_59.derived_config.md: requires values from both files:
         assert (
-            EnvState.state_client_conf_file_data.name in parent_states
-            and EnvState.state_env_conf_file_data.name in parent_states
+            EnvState.state_client_conf_file_data_loaded.name in parent_states
+            and EnvState.state_env_conf_file_data_loaded.name in parent_states
         )
 
-    def _get_merged_value_or_default(
+    def _get_overridden_value_or_default(
         self,
         field_name: str,
-        default_field_value: ValueType,
-    ) -> ValueType | None:
-        state_client_conf_file_data: dict = self.eval_parent_state(
-            EnvState.state_client_conf_file_data.name
+        default_field_value: DataValueType,
+    ) -> DataValueType:
+        """
+        Implements config overrides: FT_23_37_64_44.conf_dst.md
+        """
+
+        state_client_conf_file_data_loaded: dict = self.eval_parent_state(
+            EnvState.state_client_conf_file_data_loaded.name
         )
-        state_env_conf_file_data: dict = self.eval_parent_state(
-            EnvState.state_env_conf_file_data.name
+        state_env_conf_file_data_loaded: dict = self.eval_parent_state(
+            EnvState.state_env_conf_file_data_loaded.name
         )
-        field_value: ValueType | None
-        if field_name in state_env_conf_file_data:
-            field_value = state_env_conf_file_data[field_name]
+        field_value: DataValueType
+        if field_name in state_env_conf_file_data_loaded:
+            field_value = state_env_conf_file_data_loaded[field_name]
         else:
-            field_value = state_client_conf_file_data.get(
+            field_value = state_client_conf_file_data_loaded.get(
                 field_name,
                 default_field_value,
             )
         return field_value
+
+
+########################################################################################################################
 
 
 # noinspection PyPep8Naming
@@ -1726,7 +2846,7 @@ class Bootstrapper_state_input_do_install_var_loaded(AbstractCachingStateNode[bo
     def _eval_state_once(
         self,
     ) -> ValueType:
-        state_input_do_install_var_loaded: bool = str2bool(
+        state_input_do_install_var_loaded: bool = str_to_bool(
             os.getenv(
                 EnvVar.var_PROTOPRIMER_DO_INSTALL.value,
                 ConfConstInput.default_PROTOPRIMER_DO_INSTALL,
@@ -1796,38 +2916,6 @@ class Bootstrapper_state_args_parsed(AbstractCachingStateNode[argparse.Namespace
     ) -> ValueType:
         state_args_parsed: argparse.Namespace = init_arg_parser().parse_args()
         return state_args_parsed
-
-
-# noinspection PyPep8Naming
-class Bootstrapper_state_input_wizard_stage_arg_loaded(
-    AbstractCachingStateNode[WizardStage]
-):
-
-    def __init__(
-        self,
-        env_ctx: EnvContext,
-        state_name: str | None = None,
-    ):
-        super().__init__(
-            env_ctx=env_ctx,
-            parent_states=[
-                EnvState.state_args_parsed.name,
-            ],
-            state_name=if_none(
-                state_name,
-                EnvState.state_input_wizard_stage_arg_loaded.name,
-            ),
-        )
-
-    def _eval_state_once(
-        self,
-    ) -> ValueType:
-        return WizardStage[
-            getattr(
-                self.eval_parent_state(EnvState.state_args_parsed.name),
-                ParsedArg.name_wizard_stage.value,
-            )
-        ]
 
 
 # noinspection PyPep8Naming
@@ -2038,13 +3126,11 @@ class Bootstrapper_state_run_mode_executed(AbstractCachingStateNode[bool]):
             raise ValueError(f"run mode is not defined")
         elif state_input_run_mode_arg_loaded == RunMode.mode_prime:
             selected_strategy = ExitCodeReporter(self.env_ctx)
-        elif state_input_run_mode_arg_loaded == RunMode.mode_wizard:
-            for wizard_state in WizardState:
-                self.env_ctx.state_graph.register_node(
-                    wizard_state.value(self.env_ctx),
-                    replace_existing=True,
-                )
+        elif state_input_run_mode_arg_loaded == RunMode.mode_config:
             selected_strategy = ExitCodeReporter(self.env_ctx)
+            state_node = self.env_ctx.state_graph.state_nodes[
+                EnvState.state_effective_config_data_printed.name
+            ]
         else:
             raise ValueError(
                 f"cannot handle run mode [{state_input_run_mode_arg_loaded}]"
@@ -2167,7 +3253,6 @@ class Bootstrapper_state_py_exec_arbitrary_reached(
         super().__init__(
             env_ctx=env_ctx,
             parent_states=[
-                EnvState.state_input_wizard_stage_arg_loaded.name,
                 EnvState.state_input_py_exec_var_loaded.name,
                 EnvState.state_input_start_id_var_loaded.name,
             ],
@@ -2228,9 +3313,6 @@ class Bootstrapper_state_py_exec_arbitrary_reached(
                 next_python_path=path_to_next_python,
                 start_id=state_input_start_id_var_loaded,
                 proto_code_abs_file_path=None,
-                wizard_stage=self.env_ctx.mutable_state_input_wizard_stage_arg_loaded.get_curr_value(
-                    self,
-                ),
                 required_environ=cleaned_env,
             )
 
@@ -2301,7 +3383,7 @@ class Bootstrapper_state_input_proto_code_file_abs_path_eval_finalized(
 
 
 # noinspection PyPep8Naming
-class Bootstrapper_state_input_proto_code_dir_abs_path_eval_finalized(
+class Bootstrapper_state_input_proto_conf_primer_file_abs_path_eval_finalized(
     AbstractCachingStateNode[str]
 ):
 
@@ -2317,44 +3399,6 @@ class Bootstrapper_state_input_proto_code_dir_abs_path_eval_finalized(
             ],
             state_name=if_none(
                 state_name,
-                EnvState.state_input_proto_code_dir_abs_path_eval_finalized.name,
-            ),
-        )
-
-    def _eval_state_once(
-        self,
-    ) -> ValueType:
-
-        state_input_proto_code_file_abs_path_eval_finalized: str = (
-            self.eval_parent_state(
-                EnvState.state_input_proto_code_file_abs_path_eval_finalized.name
-            )
-        )
-        state_input_proto_code_dir_abs_path_eval_finalized: str = os.path.dirname(
-            state_input_proto_code_file_abs_path_eval_finalized
-        )
-
-        assert os.path.isabs(state_input_proto_code_dir_abs_path_eval_finalized)
-        return state_input_proto_code_dir_abs_path_eval_finalized
-
-
-# noinspection PyPep8Naming
-class Bootstrapper_state_input_proto_conf_primer_file_abs_path_eval_finalized(
-    AbstractCachingStateNode[str]
-):
-
-    def __init__(
-        self,
-        env_ctx: EnvContext,
-        state_name: str | None = None,
-    ):
-        super().__init__(
-            env_ctx=env_ctx,
-            parent_states=[
-                EnvState.state_input_proto_code_dir_abs_path_eval_finalized.name,
-            ],
-            state_name=if_none(
-                state_name,
                 EnvState.state_input_proto_conf_primer_file_abs_path_eval_finalized.name,
             ),
         )
@@ -2362,19 +3406,51 @@ class Bootstrapper_state_input_proto_conf_primer_file_abs_path_eval_finalized(
     def _eval_state_once(
         self,
     ) -> ValueType:
-        state_input_proto_code_dir_abs_path_eval_finalized = self.eval_parent_state(
-            EnvState.state_input_proto_code_dir_abs_path_eval_finalized.name
+        """
+        Select the conf file name from a list of candidate basenames (whichever is found first).
+        """
+        state_input_proto_code_file_abs_path_eval_finalized = self.eval_parent_state(
+            EnvState.state_input_proto_code_file_abs_path_eval_finalized.name
         )
 
-        # TODO: be able to configure path:
+        proto_code_dir_abs_path: str = os.path.dirname(
+            state_input_proto_code_file_abs_path_eval_finalized
+        )
+
+        candidate_basenames = []
+        conf_basename_from_env = os.environ.get(
+            EnvVar.var_PROTOPRIMER_CONF_BASENAME.value, None
+        )
+        if conf_basename_from_env is not None:
+            candidate_basenames.append(conf_basename_from_env)
+
+        candidate_basenames.extend(
+            [
+                f"{pathlib.Path(sys.argv[0]).stem}.{ConfConstInput.conf_file_ext}",
+                f"{pathlib.Path(state_input_proto_code_file_abs_path_eval_finalized).stem}.{ConfConstInput.conf_file_ext}",
+                ConfConstInput.default_file_basename_conf_primer,
+            ]
+        )
+
+        for candidate_basename in candidate_basenames:
+            candidate_conf_file_abs_path = os.path.join(
+                proto_code_dir_abs_path,
+                candidate_basename,
+            )
+            logger.debug(f"candidate conf file name: {candidate_conf_file_abs_path}")
+            if os.path.exists(candidate_conf_file_abs_path):
+                return candidate_conf_file_abs_path
+
+        # Use `ConfConstInput.default_file_basename_conf_primer` even if not found
+        # because it names conf files for other `ConfLeap.*`:
         return os.path.join(
-            state_input_proto_code_dir_abs_path_eval_finalized,
+            proto_code_dir_abs_path,
             ConfConstInput.default_file_basename_conf_primer,
         )
 
 
 # noinspection PyPep8Naming
-class Bootstrapper_state_proto_conf_file_data(AbstractCachingStateNode[dict]):
+class Bootstrapper_state_primer_conf_file_data_loaded(AbstractCachingStateNode[dict]):
 
     def __init__(
         self,
@@ -2384,18 +3460,26 @@ class Bootstrapper_state_proto_conf_file_data(AbstractCachingStateNode[dict]):
         super().__init__(
             env_ctx=env_ctx,
             parent_states=[
+                EnvState.state_input_run_mode_arg_loaded.name,
+                EnvState.state_input_py_exec_var_loaded.name,
+                EnvState.state_input_proto_code_file_abs_path_eval_finalized.name,
                 EnvState.state_input_proto_conf_primer_file_abs_path_eval_finalized.name,
             ],
             state_name=if_none(
                 state_name,
-                EnvState.state_proto_conf_file_data.name,
+                EnvState.state_primer_conf_file_data_loaded.name,
             ),
         )
 
     def _eval_state_once(
         self,
     ) -> ValueType:
-        state_input_proto_conf_primer_file_abs_path_eval_finalized = (
+        state_input_proto_code_file_abs_path_eval_finalized: str = (
+            self.eval_parent_state(
+                EnvState.state_input_proto_code_file_abs_path_eval_finalized.name
+            )
+        )
+        state_input_proto_conf_primer_file_abs_path_eval_finalized: str = (
             self.eval_parent_state(
                 EnvState.state_input_proto_conf_primer_file_abs_path_eval_finalized.name
             )
@@ -2416,65 +3500,28 @@ class Bootstrapper_state_proto_conf_file_data(AbstractCachingStateNode[dict]):
             )
             file_data = {}
 
-        return file_data
+        if can_print_effective_config(self):
 
-
-# noinspection PyPep8Naming
-class Wizard_state_proto_conf_file_data(AbstractCachingStateNode[dict]):
-
-    def __init__(
-        self,
-        env_ctx: EnvContext,
-        state_name: str | None = None,
-    ):
-        self.moved_state_name = rename_to_moved_state_name(
-            EnvState.state_proto_conf_file_data.name
-        )
-        super().__init__(
-            env_ctx=env_ctx,
-            parent_states=[
-                EnvState.state_input_wizard_stage_arg_loaded.name,
-                EnvState.state_input_proto_code_dir_abs_path_eval_finalized.name,
-                EnvState.state_input_proto_conf_primer_file_abs_path_eval_finalized.name,
-                # UC_27_40_17_59.replace_by_new_and_use_old.md:
-                # Depend on the moved state:
-                self.moved_state_name,
-            ],
-            state_name=if_none(
-                state_name,
-                EnvState.state_proto_conf_file_data.name,
-            ),
-            # Bootstrap manually to avoid touching `moved_state_node`:
-            auto_bootstrap_parents=False,
-        )
-
-        # UC_27_40_17_59.replace_by_new_and_use_old.md:
-        # Register the moved state implementation:
-        self.moved_state_node = Bootstrapper_state_proto_conf_file_data(
-            env_ctx,
-            self.moved_state_name,
-        )
-        self.env_ctx.state_graph.register_node(self.moved_state_node)
-
-    def _eval_state_once(
-        self,
-    ) -> ValueType:
-
-        state_input_proto_conf_primer_file_abs_path_eval_finalized = (
-            self.eval_parent_state(
-                EnvState.state_input_proto_conf_primer_file_abs_path_eval_finalized.name
+            # Print `ConfLeap.leap_input` data together:
+            # ===
+            # `ConfLeap.leap_input`:
+            conf_input = RootNode_input(
+                node_indent=0,
+                orig_data={
+                    EnvState.state_input_proto_code_file_abs_path_eval_finalized.name: state_input_proto_code_file_abs_path_eval_finalized,
+                    EnvState.state_input_proto_conf_primer_file_abs_path_eval_finalized.name: state_input_proto_conf_primer_file_abs_path_eval_finalized,
+                },
             )
-        )
+            print(RenderConfigVisitor().render_node(conf_input))
 
-        file_data = wizard_conf_file(
-            self,
-            ConfLeap.leap_primer,
-            state_input_proto_conf_primer_file_abs_path_eval_finalized,
-            default_file_data={
-                ConfField.field_primer_ref_root_dir_rel_path.value: ConfConstGeneral.curr_dir_rel_path,
-                ConfField.field_primer_conf_client_file_rel_path.value: ConfConstPrimer.default_client_conf_file_rel_path,
-            },
-        )
+            # ===
+            # `ConfLeap.leap_input`:
+            conf_primer = RootNode_primer(
+                node_indent=0,
+                orig_data=file_data,
+                state_input_proto_conf_primer_file_abs_path_eval_finalized=state_input_proto_conf_primer_file_abs_path_eval_finalized,
+            )
+            print(RenderConfigVisitor().render_node(conf_primer))
 
         return file_data
 
@@ -2492,8 +3539,8 @@ class Bootstrapper_state_primer_ref_root_dir_abs_path_eval_finalized(
         super().__init__(
             env_ctx=env_ctx,
             parent_states=[
-                EnvState.state_input_proto_code_dir_abs_path_eval_finalized.name,
-                EnvState.state_proto_conf_file_data.name,
+                EnvState.state_input_proto_code_file_abs_path_eval_finalized.name,
+                EnvState.state_primer_conf_file_data_loaded.name,
             ],
             state_name=if_none(
                 state_name,
@@ -2504,32 +3551,32 @@ class Bootstrapper_state_primer_ref_root_dir_abs_path_eval_finalized(
     def _eval_state_once(
         self,
     ) -> ValueType:
-        state_proto_conf_file_data: dict = self.eval_parent_state(
-            EnvState.state_proto_conf_file_data.name
+        state_input_proto_code_file_abs_path_eval_finalized = self.eval_parent_state(
+            EnvState.state_input_proto_code_file_abs_path_eval_finalized.name
         )
 
-        field_client_dir_rel_path: str | None = state_proto_conf_file_data.get(
+        proto_code_dir_abs_path: str = os.path.dirname(
+            state_input_proto_code_file_abs_path_eval_finalized
+        )
+
+        state_primer_conf_file_data_loaded: dict = self.eval_parent_state(
+            EnvState.state_primer_conf_file_data_loaded.name
+        )
+
+        field_client_dir_rel_path: str | None = state_primer_conf_file_data_loaded.get(
             ConfField.field_primer_ref_root_dir_rel_path.value,
             None,
-        )
-
-        state_input_proto_code_dir_abs_path_eval_finalized: str = (
-            self.eval_parent_state(
-                EnvState.state_input_proto_code_dir_abs_path_eval_finalized.name
-            )
         )
 
         state_primer_ref_root_dir_abs_path_eval_finalized: str
         if field_client_dir_rel_path is None:
             logger.warning(
-                f"Field `{ConfField.field_primer_ref_root_dir_rel_path.value}` is [{field_client_dir_rel_path}] - re-run with [{SyntaxArg.arg_mode_wizard}] to set it."
+                f"Field `{ConfField.field_primer_ref_root_dir_rel_path.value}` is [{field_client_dir_rel_path}] - use [{SyntaxArg.arg_mode_config}] for description."
             )
-            state_primer_ref_root_dir_abs_path_eval_finalized = (
-                state_input_proto_code_dir_abs_path_eval_finalized
-            )
+            state_primer_ref_root_dir_abs_path_eval_finalized = proto_code_dir_abs_path
         else:
             state_primer_ref_root_dir_abs_path_eval_finalized = os.path.join(
-                state_input_proto_code_dir_abs_path_eval_finalized,
+                proto_code_dir_abs_path,
                 field_client_dir_rel_path,
             )
 
@@ -2539,6 +3586,62 @@ class Bootstrapper_state_primer_ref_root_dir_abs_path_eval_finalized(
 
         assert os.path.isabs(state_primer_ref_root_dir_abs_path_eval_finalized)
         return state_primer_ref_root_dir_abs_path_eval_finalized
+
+
+# noinspection PyPep8Naming
+class Bootstrapper_state_primer_conf_client_dir_abs_path_eval_finalized(
+    AbstractCachingStateNode[str]
+):
+
+    def __init__(
+        self,
+        env_ctx: EnvContext,
+        state_name: str | None = None,
+    ):
+        super().__init__(
+            env_ctx=env_ctx,
+            parent_states=[
+                EnvState.state_primer_conf_file_data_loaded.name,
+                EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name,
+            ],
+            state_name=if_none(
+                state_name,
+                EnvState.state_primer_conf_client_dir_abs_path_eval_finalized.name,
+            ),
+        )
+
+    def _eval_state_once(
+        self,
+    ) -> ValueType:
+
+        state_primer_ref_root_dir_abs_path_eval_finalized: str = self.eval_parent_state(
+            EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name
+        )
+
+        state_primer_conf_file_data_loaded: dict = self.eval_parent_state(
+            EnvState.state_primer_conf_file_data_loaded.name
+        )
+
+        field_client_config_dir_rel_path: str | None = (
+            state_primer_conf_file_data_loaded.get(
+                ConfField.field_primer_conf_client_dir_rel_path.value,
+                None,
+            )
+        )
+
+        state_primer_conf_client_dir_abs_path_eval_finalized: str | None
+        if field_client_config_dir_rel_path is None:
+            state_primer_conf_client_dir_abs_path_eval_finalized = os.path.join(
+                state_primer_ref_root_dir_abs_path_eval_finalized,
+                ConfConstPrimer.default_client_conf_dir_rel_path,
+            )
+        else:
+            state_primer_conf_client_dir_abs_path_eval_finalized = os.path.join(
+                state_primer_ref_root_dir_abs_path_eval_finalized,
+                field_client_config_dir_rel_path,
+            )
+
+        return state_primer_conf_client_dir_abs_path_eval_finalized
 
 
 # noinspection PyPep8Naming
@@ -2554,8 +3657,8 @@ class Bootstrapper_state_primer_conf_client_file_abs_path_eval_finalized(
         super().__init__(
             env_ctx=env_ctx,
             parent_states=[
-                EnvState.state_proto_conf_file_data.name,
-                EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name,
+                EnvState.state_input_proto_conf_primer_file_abs_path_eval_finalized.name,
+                EnvState.state_primer_conf_client_dir_abs_path_eval_finalized.name,
             ],
             state_name=if_none(
                 state_name,
@@ -2566,37 +3669,32 @@ class Bootstrapper_state_primer_conf_client_file_abs_path_eval_finalized(
     def _eval_state_once(
         self,
     ) -> ValueType:
-        state_primer_ref_root_dir_abs_path_eval_finalized: str = self.eval_parent_state(
-            EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name
-        )
 
-        state_proto_conf_file_data: dict = self.eval_parent_state(
-            EnvState.state_proto_conf_file_data.name
-        )
-
-        field_client_config_rel_path: str | None = state_proto_conf_file_data.get(
-            ConfField.field_primer_conf_client_file_rel_path.value,
-            None,
-        )
-
-        state_primer_conf_client_file_abs_path_eval_finalized: str | None
-        if field_client_config_rel_path is None:
-            # No client config:
-            logger.warning(
-                f"Field `{ConfField.field_primer_conf_client_file_rel_path.value}` is [{field_client_config_rel_path}] - re-run with [{SyntaxArg.arg_mode_wizard}] to set it."
+        state_input_proto_conf_primer_file_abs_path_eval_finalized: str = (
+            self.eval_parent_state(
+                EnvState.state_input_proto_conf_primer_file_abs_path_eval_finalized.name
             )
-            state_primer_conf_client_file_abs_path_eval_finalized = None
-        else:
-            state_primer_conf_client_file_abs_path_eval_finalized = os.path.join(
-                state_primer_ref_root_dir_abs_path_eval_finalized,
-                field_client_config_rel_path,
+        )
+        conf_file_base_name = os.path.basename(
+            state_input_proto_conf_primer_file_abs_path_eval_finalized
+        )
+
+        state_primer_conf_client_dir_abs_path_eval_finalized: str = (
+            self.eval_parent_state(
+                EnvState.state_primer_conf_client_dir_abs_path_eval_finalized.name
             )
+        )
+
+        state_primer_conf_client_file_abs_path_eval_finalized: str = os.path.join(
+            state_primer_conf_client_dir_abs_path_eval_finalized,
+            conf_file_base_name,
+        )
 
         return state_primer_conf_client_file_abs_path_eval_finalized
 
 
 # noinspection PyPep8Naming
-class Bootstrapper_state_client_conf_file_data(AbstractCachingStateNode[dict]):
+class Bootstrapper_state_client_conf_file_data_loaded(AbstractCachingStateNode[dict]):
 
     def __init__(
         self,
@@ -2606,11 +3704,13 @@ class Bootstrapper_state_client_conf_file_data(AbstractCachingStateNode[dict]):
         super().__init__(
             env_ctx=env_ctx,
             parent_states=[
+                EnvState.state_input_run_mode_arg_loaded.name,
+                EnvState.state_input_py_exec_var_loaded.name,
                 EnvState.state_primer_conf_client_file_abs_path_eval_finalized.name,
             ],
             state_name=if_none(
                 state_name,
-                EnvState.state_client_conf_file_data.name,
+                EnvState.state_client_conf_file_data_loaded.name,
             ),
         )
 
@@ -2618,16 +3718,14 @@ class Bootstrapper_state_client_conf_file_data(AbstractCachingStateNode[dict]):
         self,
     ) -> ValueType:
 
-        state_primer_conf_client_file_abs_path_eval_finalized: str | None = (
+        state_primer_conf_client_file_abs_path_eval_finalized: str = (
             self.eval_parent_state(
                 EnvState.state_primer_conf_client_file_abs_path_eval_finalized.name
             )
         )
 
         file_data: dict
-        if state_primer_conf_client_file_abs_path_eval_finalized is None:
-            file_data = {}
-        elif os.path.exists(state_primer_conf_client_file_abs_path_eval_finalized):
+        if os.path.exists(state_primer_conf_client_file_abs_path_eval_finalized):
             file_data = read_json_file(
                 state_primer_conf_client_file_abs_path_eval_finalized
             )
@@ -2636,78 +3734,18 @@ class Bootstrapper_state_client_conf_file_data(AbstractCachingStateNode[dict]):
                 file_data,
             )
         else:
-            # TODO: Maybe fail with assertion given that file is configured:
             warn_on_missing_conf_file(
                 state_primer_conf_client_file_abs_path_eval_finalized
             )
             file_data = {}
 
-        return file_data
-
-
-# noinspection PyPep8Naming
-class Wizard_state_client_conf_file_data(AbstractCachingStateNode[dict]):
-
-    def __init__(
-        self,
-        env_ctx: EnvContext,
-        state_name: str | None = None,
-    ):
-        self.moved_state_name = rename_to_moved_state_name(
-            EnvState.state_client_conf_file_data.name
-        )
-        super().__init__(
-            env_ctx=env_ctx,
-            parent_states=[
-                EnvState.state_input_wizard_stage_arg_loaded.name,
-                EnvState.state_primer_conf_client_file_abs_path_eval_finalized.name,
-                # UC_27_40_17_59.replace_by_new_and_use_old.md:
-                # Depend on the moved state:
-                self.moved_state_name,
-            ],
-            state_name=if_none(
-                state_name,
-                EnvState.state_client_conf_file_data.name,
-            ),
-            # Bootstrap manually to avoid touching `moved_state_node`:
-            auto_bootstrap_parents=False,
-        )
-
-        # UC_27_40_17_59.replace_by_new_and_use_old.md:
-        # Register the moved state implementation:
-        self.moved_state_node = Bootstrapper_state_client_conf_file_data(
-            env_ctx,
-            self.moved_state_name,
-        )
-        self.env_ctx.state_graph.register_node(self.moved_state_node)
-
-    def _eval_state_once(
-        self,
-    ) -> ValueType:
-
-        state_primer_conf_client_file_abs_path_eval_finalized = self.eval_parent_state(
-            EnvState.state_primer_conf_client_file_abs_path_eval_finalized.name
-        )
-
-        file_data = wizard_conf_file(
-            self,
-            ConfLeap.leap_client,
-            state_primer_conf_client_file_abs_path_eval_finalized,
-            default_file_data={
-                # TODO: Proposing default (when value is missing in data) does not work here.
-                #       What we want to know (before proposing default) is whether env-specific config even needed.
-                ConfField.field_client_link_name_dir_rel_path.value: ConfConstClient.default_dir_rel_path_leap_env_link_name,
-                # TODO: This should not be part of the file - defaults should be configured, not generated (or generated by extensible code):
-                # TODO: Prompt use in wizard and validate the value refers to an existing directory:
-                ConfField.field_client_default_env_dir_rel_path.value: ConfConstClient.default_client_default_env_dir_rel_path,
-                # TODO: Do not use default values directly - resolve it differently at the prev|next step based on the need:
-                ConfField.field_required_python_file_abs_path.value: ConfConstEnv.default_file_abs_path_python,
-                ConfField.field_local_venv_dir_rel_path.value: ConfConstEnv.default_dir_rel_path_venv,
-                ConfField.field_local_log_dir_rel_path.value: ConfConstEnv.default_dir_rel_path_log,
-                ConfField.field_local_tmp_dir_rel_path.value: ConfConstEnv.default_dir_rel_path_tmp,
-                ConfField.field_project_descriptors.value: ConfConstEnv.default_project_descriptors,
-            },
-        )
+        if can_print_effective_config(self):
+            conf_client = RootNode_client(
+                node_indent=0,
+                orig_data=file_data,
+                state_primer_conf_client_file_abs_path_eval_finalized=state_primer_conf_client_file_abs_path_eval_finalized,
+            )
+            print(RenderConfigVisitor().render_node(conf_client))
 
         return file_data
 
@@ -2727,7 +3765,7 @@ class Bootstrapper_state_client_local_env_conf_dir_rel_path_eval_finalized(
             parent_states=[
                 EnvState.state_args_parsed.name,
                 EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name,
-                EnvState.state_client_conf_file_data.name,
+                EnvState.state_client_conf_file_data_loaded.name,
             ],
             state_name=if_none(
                 state_name,
@@ -2793,18 +3831,18 @@ class Bootstrapper_state_client_local_env_conf_dir_rel_path_eval_finalized(
         )
         if env_conf_dir_any_path is None:
             # Use the default env configured:
-            state_client_conf_file_data: dict = self.eval_parent_state(
-                EnvState.state_client_conf_file_data.name
+            state_client_conf_file_data_loaded: dict = self.eval_parent_state(
+                EnvState.state_client_conf_file_data_loaded.name
             )
             field_client_default_env_dir_rel_path: str | None = (
-                state_client_conf_file_data.get(
+                state_client_conf_file_data_loaded.get(
                     ConfField.field_client_default_env_dir_rel_path.value,
                     None,
                 )
             )
             if field_client_default_env_dir_rel_path is None:
                 logger.warning(
-                    f"Field `{ConfField.field_client_default_env_dir_rel_path.value}` is [{field_client_default_env_dir_rel_path}] - re-run with [{SyntaxArg.arg_mode_wizard}] to set it."
+                    f"Field `{ConfField.field_client_default_env_dir_rel_path.value}` is [{field_client_default_env_dir_rel_path}] - use [{SyntaxArg.arg_mode_config}] for description."
                 )
                 return None
             if os.path.isabs(field_client_default_env_dir_rel_path):
@@ -2867,7 +3905,7 @@ class Bootstrapper_state_client_conf_env_dir_abs_path_eval_finalized(
             env_ctx=env_ctx,
             parent_states=[
                 EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name,
-                EnvState.state_client_conf_file_data.name,
+                EnvState.state_client_conf_file_data_loaded.name,
                 EnvState.state_client_local_env_conf_dir_rel_path_eval_finalized.name,
             ],
             state_name=if_none(
@@ -2894,22 +3932,29 @@ class Bootstrapper_state_client_conf_env_dir_abs_path_eval_finalized(
             # No symlink target => no `conf_leap` => use `client_conf`:
             return state_primer_ref_root_dir_abs_path_eval_finalized
 
-        file_data: dict = self.eval_parent_state(
-            EnvState.state_client_conf_file_data.name
+        state_client_conf_file_data_loaded: dict = self.eval_parent_state(
+            EnvState.state_client_conf_file_data_loaded.name
         )
-
-        env_conf_dir_rel_path: str = file_data.get(
-            ConfField.field_client_link_name_dir_rel_path.value,
-            ConfConstClient.default_dir_rel_path_leap_env_link_name,
+        client_env_conf_link_name_dir_rel_path: str | None = (
+            state_client_conf_file_data_loaded.get(
+                ConfField.field_client_link_name_dir_rel_path.value,
+                None,
+            )
         )
-
-        assert not os.path.isabs(env_conf_dir_rel_path)
 
         # Convert to absolute:
-        state_client_conf_env_dir_abs_path_eval_finalized: str = os.path.join(
-            state_primer_ref_root_dir_abs_path_eval_finalized,
-            env_conf_dir_rel_path,
-        )
+        state_client_conf_env_dir_abs_path_eval_finalized: str
+        if client_env_conf_link_name_dir_rel_path is None:
+            state_client_conf_env_dir_abs_path_eval_finalized = (
+                state_primer_ref_root_dir_abs_path_eval_finalized
+            )
+        else:
+            # TODO: Handle via AssertionError:
+            assert not os.path.isabs(client_env_conf_link_name_dir_rel_path)
+            state_client_conf_env_dir_abs_path_eval_finalized = os.path.join(
+                state_primer_ref_root_dir_abs_path_eval_finalized,
+                client_env_conf_link_name_dir_rel_path,
+            )
 
         if os.path.exists(state_client_conf_env_dir_abs_path_eval_finalized):
             if os.path.islink(state_client_conf_env_dir_abs_path_eval_finalized):
@@ -2945,46 +3990,6 @@ class Bootstrapper_state_client_conf_env_dir_abs_path_eval_finalized(
 
 
 # noinspection PyPep8Naming
-class Bootstrapper_state_client_link_name_dir_rel_path_eval_finalized(
-    AbstractCachingStateNode[str]
-):
-
-    def __init__(
-        self,
-        env_ctx: EnvContext,
-        state_name: str | None = None,
-    ):
-        super().__init__(
-            env_ctx=env_ctx,
-            parent_states=[
-                EnvState.state_client_conf_file_data.name,
-            ],
-            state_name=if_none(
-                state_name,
-                EnvState.state_client_link_name_dir_rel_path_eval_finalized.name,
-            ),
-        )
-
-    def _eval_state_once(
-        self,
-    ) -> ValueType:
-
-        state_client_conf_file_data: dict = self.eval_parent_state(
-            EnvState.state_client_conf_file_data.name
-        )
-        state_client_link_name_dir_rel_path_eval_finalized: str | None = (
-            state_client_conf_file_data.get(
-                ConfField.field_client_link_name_dir_rel_path.value,
-            )
-        )
-        if state_client_link_name_dir_rel_path_eval_finalized is None:
-            logger.warning(
-                f"Field `{ConfField.field_client_link_name_dir_rel_path.value}` is [{state_client_link_name_dir_rel_path_eval_finalized}] - re-run with [{SyntaxArg.arg_mode_wizard}] to set it."
-            )
-        return state_client_link_name_dir_rel_path_eval_finalized
-
-
-# noinspection PyPep8Naming
 class Bootstrapper_state_client_conf_env_file_abs_path_eval_finalized(
     AbstractCachingStateNode[str]
 ):
@@ -2997,9 +4002,8 @@ class Bootstrapper_state_client_conf_env_file_abs_path_eval_finalized(
         super().__init__(
             env_ctx=env_ctx,
             parent_states=[
-                EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name,
+                EnvState.state_input_proto_conf_primer_file_abs_path_eval_finalized.name,
                 EnvState.state_client_conf_env_dir_abs_path_eval_finalized.name,
-                EnvState.state_client_link_name_dir_rel_path_eval_finalized.name,
             ],
             state_name=if_none(
                 state_name,
@@ -3011,48 +4015,29 @@ class Bootstrapper_state_client_conf_env_file_abs_path_eval_finalized(
         self,
     ) -> ValueType:
 
-        state_primer_ref_root_dir_abs_path_eval_finalized: str = self.eval_parent_state(
-            EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name
-        )
-        assert state_primer_ref_root_dir_abs_path_eval_finalized is not None
-
-        state_client_link_name_dir_rel_path_eval_finalized: str | None = (
+        state_input_proto_conf_primer_file_abs_path_eval_finalized: str = (
             self.eval_parent_state(
-                EnvState.state_client_link_name_dir_rel_path_eval_finalized.name
+                EnvState.state_input_proto_conf_primer_file_abs_path_eval_finalized.name
             )
         )
-
-        state_client_conf_env_file_abs_path_eval_finalized: str
-        if state_client_link_name_dir_rel_path_eval_finalized is None:
-            state_client_conf_env_file_abs_path_eval_finalized = os.path.join(
-                state_primer_ref_root_dir_abs_path_eval_finalized,
-                # TODO: Do not use default values directly - resolve it differently at the prev|next step based on the need:
-                ConfConstClient.default_file_basename_leap_env,
-            )
-        else:
-            state_client_conf_env_file_abs_path_eval_finalized = os.path.join(
-                state_primer_ref_root_dir_abs_path_eval_finalized,
-                state_client_link_name_dir_rel_path_eval_finalized,
-                # TODO: Do not use default values directly - resolve it differently at the prev|next step based on the need:
-                ConfConstClient.default_file_basename_leap_env,
-            )
+        conf_file_base_name = os.path.basename(
+            state_input_proto_conf_primer_file_abs_path_eval_finalized
+        )
 
         state_client_conf_env_dir_abs_path_eval_finalized: str = self.eval_parent_state(
             EnvState.state_client_conf_env_dir_abs_path_eval_finalized.name
         )
-        if not is_sub_path(
-            state_client_conf_env_file_abs_path_eval_finalized,
+
+        state_client_conf_env_file_abs_path_eval_finalized = os.path.join(
             state_client_conf_env_dir_abs_path_eval_finalized,
-        ):
-            raise AssertionError(
-                f"The config file path [{state_client_conf_env_file_abs_path_eval_finalized}] is not under the config dir path [{state_client_conf_env_dir_abs_path_eval_finalized}].",
-            )
+            conf_file_base_name,
+        )
 
         return state_client_conf_env_file_abs_path_eval_finalized
 
 
 # noinspection PyPep8Naming
-class Bootstrapper_state_env_conf_file_data(AbstractCachingStateNode[dict]):
+class Bootstrapper_state_env_conf_file_data_loaded(AbstractCachingStateNode[dict]):
 
     def __init__(
         self,
@@ -3062,11 +4047,13 @@ class Bootstrapper_state_env_conf_file_data(AbstractCachingStateNode[dict]):
         super().__init__(
             env_ctx=env_ctx,
             parent_states=[
+                EnvState.state_input_run_mode_arg_loaded.name,
+                EnvState.state_input_py_exec_var_loaded.name,
                 EnvState.state_client_conf_env_file_abs_path_eval_finalized.name,
             ],
             state_name=if_none(
                 state_name,
-                EnvState.state_env_conf_file_data.name,
+                EnvState.state_env_conf_file_data_loaded.name,
             ),
         )
 
@@ -3095,79 +4082,25 @@ class Bootstrapper_state_env_conf_file_data(AbstractCachingStateNode[dict]):
                 # TODO: `ConfConstEnv.default_project_descriptors` is not suitable for `instant` condition:
                 ConfField.field_project_descriptors.value: [
                     {
-                        ConfField.field_env_build_root_dir_rel_path.value: ConfConstGeneral.curr_dir_rel_path,
+                        ConfField.field_build_root_dir_rel_path.value: ConfConstGeneral.curr_dir_rel_path,
                     },
                 ],
             }
-        return file_data
 
-
-# noinspection PyPep8Naming
-class Wizard_state_env_conf_file_data(AbstractCachingStateNode[dict]):
-
-    def __init__(
-        self,
-        env_ctx: EnvContext,
-        state_name: str | None = None,
-    ):
-        self.moved_state_name = rename_to_moved_state_name(
-            EnvState.state_env_conf_file_data.name
-        )
-        super().__init__(
-            env_ctx=env_ctx,
-            parent_states=[
-                EnvState.state_input_wizard_stage_arg_loaded.name,
-                EnvState.state_client_conf_env_file_abs_path_eval_finalized.name,
-                # UC_27_40_17_59.replace_by_new_and_use_old.md:
-                # Depend on the moved state:
-                self.moved_state_name,
-            ],
-            state_name=if_none(
-                state_name,
-                EnvState.state_env_conf_file_data.name,
-            ),
-            # Bootstrap manually to avoid touching `moved_state_node`:
-            auto_bootstrap_parents=False,
-        )
-
-        # UC_27_40_17_59.replace_by_new_and_use_old.md:
-        # Register the moved state implementation:
-        self.moved_state_node = Bootstrapper_state_env_conf_file_data(
-            env_ctx,
-            self.moved_state_name,
-        )
-        self.env_ctx.state_graph.register_node(self.moved_state_node)
-
-    def _eval_state_once(
-        self,
-    ) -> ValueType:
-
-        state_client_conf_env_file_abs_path_eval_finalized = self.eval_parent_state(
-            EnvState.state_client_conf_env_file_abs_path_eval_finalized.name
-        )
-
-        # TODO: This creates a directory with `ConfConstClient.default_dir_rel_path_leap_env_link_name` instead of symlink.
-        #       But this happens only if dependency
-        #       `state_client_conf_env_file_abs_path_eval_finalized` -> `state_client_conf_env_dir_abs_path_eval_verified`
-        #       was not executed (which is not possible outside of tests).
-        file_data = wizard_conf_file(
-            self,
-            ConfLeap.leap_env,
-            state_client_conf_env_file_abs_path_eval_finalized,
-            default_file_data={},
-        )
-
-        # Finish the wizard because this is the final wizard state:
-        self.env_ctx.mutable_state_input_wizard_stage_arg_loaded.set_curr_value(
-            self, WizardStage.wizard_finished
-        )
+        if can_print_effective_config(self):
+            conf_env = RootNode_env(
+                node_indent=0,
+                orig_data=file_data,
+                state_client_conf_env_file_abs_path_eval_finalized=state_client_conf_env_file_abs_path_eval_finalized,
+            )
+            print(RenderConfigVisitor().render_node(conf_env))
 
         return file_data
 
 
 # noinspection PyPep8Naming
-class Bootstrapper_state_merged_required_python_file_abs_path_eval_finalized(
-    AbstractMergedFieldCachingStateNode[str]
+class Bootstrapper_state_derived_required_python_file_abs_path_eval_finalized(
+    AbstractOverriddenFieldCachingStateNode[str]
 ):
 
     def __init__(
@@ -3179,12 +4112,12 @@ class Bootstrapper_state_merged_required_python_file_abs_path_eval_finalized(
             env_ctx=env_ctx,
             parent_states=[
                 EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name,
-                EnvState.state_client_conf_file_data.name,
-                EnvState.state_env_conf_file_data.name,
+                EnvState.state_client_conf_file_data_loaded.name,
+                EnvState.state_env_conf_file_data_loaded.name,
             ],
             state_name=if_none(
                 state_name,
-                EnvState.state_merged_required_python_file_abs_path_eval_finalized.name,
+                EnvState.state_derived_required_python_file_abs_path_eval_finalized.name,
             ),
         )
 
@@ -3192,30 +4125,32 @@ class Bootstrapper_state_merged_required_python_file_abs_path_eval_finalized(
         self,
     ) -> ValueType:
 
-        state_merged_required_python_file_abs_path_eval_finalized: str = (
-            self._get_merged_value_or_default(
+        state_derived_required_python_file_abs_path_eval_finalized: str = (
+            self._get_overridden_value_or_default(
                 ConfField.field_required_python_file_abs_path.value,
                 # TODO: Do not use default values directly - resolve it differently at the prev|next step based on the need:
                 ConfConstEnv.default_file_abs_path_python,
             )
         )
 
-        if not os.path.isabs(state_merged_required_python_file_abs_path_eval_finalized):
+        if not os.path.isabs(
+            state_derived_required_python_file_abs_path_eval_finalized
+        ):
             # TODO: Really? Do we really want to allow specifying `python` using rel path?
             #       Regardless, even if rel path, the `field_required_python_file_abs_path.value` should remove `abs` from the name then.
-            state_merged_required_python_file_abs_path_eval_finalized = os.path.join(
+            state_derived_required_python_file_abs_path_eval_finalized = os.path.join(
                 self.eval_parent_state(
                     EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name
                 ),
-                state_merged_required_python_file_abs_path_eval_finalized,
+                state_derived_required_python_file_abs_path_eval_finalized,
             )
 
-        return state_merged_required_python_file_abs_path_eval_finalized
+        return state_derived_required_python_file_abs_path_eval_finalized
 
 
 # noinspection PyPep8Naming
-class Bootstrapper_state_merged_local_venv_dir_abs_path_eval_finalized(
-    AbstractMergedFieldCachingStateNode[str]
+class Bootstrapper_state_derived_local_venv_dir_abs_path_eval_finalized(
+    AbstractOverriddenFieldCachingStateNode[str]
 ):
 
     def __init__(
@@ -3227,12 +4162,12 @@ class Bootstrapper_state_merged_local_venv_dir_abs_path_eval_finalized(
             env_ctx=env_ctx,
             parent_states=[
                 EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name,
-                EnvState.state_client_conf_file_data.name,
-                EnvState.state_env_conf_file_data.name,
+                EnvState.state_client_conf_file_data_loaded.name,
+                EnvState.state_env_conf_file_data_loaded.name,
             ],
             state_name=if_none(
                 state_name,
-                EnvState.state_merged_local_venv_dir_abs_path_eval_finalized.name,
+                EnvState.state_derived_local_venv_dir_abs_path_eval_finalized.name,
             ),
         )
 
@@ -3240,30 +4175,30 @@ class Bootstrapper_state_merged_local_venv_dir_abs_path_eval_finalized(
         self,
     ) -> ValueType:
 
-        state_merged_local_venv_dir_abs_path_eval_finalized: str = (
-            self._get_merged_value_or_default(
+        state_derived_local_venv_dir_abs_path_eval_finalized: str = (
+            self._get_overridden_value_or_default(
                 ConfField.field_local_venv_dir_rel_path.value,
                 # TODO: Do not use default values directly - resolve it differently at the prev|next step based on the need:
                 ConfConstEnv.default_dir_rel_path_venv,
             )
         )
 
-        if not os.path.isabs(state_merged_local_venv_dir_abs_path_eval_finalized):
+        if not os.path.isabs(state_derived_local_venv_dir_abs_path_eval_finalized):
             state_primer_ref_root_dir_abs_path_eval_finalized = self.eval_parent_state(
                 EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name
             )
-            state_merged_local_venv_dir_abs_path_eval_finalized = os.path.join(
+            state_derived_local_venv_dir_abs_path_eval_finalized = os.path.join(
                 state_primer_ref_root_dir_abs_path_eval_finalized,
-                state_merged_local_venv_dir_abs_path_eval_finalized,
+                state_derived_local_venv_dir_abs_path_eval_finalized,
             )
 
-        assert os.path.isabs(state_merged_local_venv_dir_abs_path_eval_finalized)
-        return state_merged_local_venv_dir_abs_path_eval_finalized
+        assert os.path.isabs(state_derived_local_venv_dir_abs_path_eval_finalized)
+        return state_derived_local_venv_dir_abs_path_eval_finalized
 
 
 # noinspection PyPep8Naming
-class Bootstrapper_state_merged_local_log_dir_abs_path_eval_finalized(
-    AbstractMergedFieldCachingStateNode[str]
+class Bootstrapper_state_derived_local_log_dir_abs_path_eval_finalized(
+    AbstractOverriddenFieldCachingStateNode[str]
 ):
 
     def __init__(
@@ -3275,12 +4210,12 @@ class Bootstrapper_state_merged_local_log_dir_abs_path_eval_finalized(
             env_ctx=env_ctx,
             parent_states=[
                 EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name,
-                EnvState.state_client_conf_file_data.name,
-                EnvState.state_env_conf_file_data.name,
+                EnvState.state_client_conf_file_data_loaded.name,
+                EnvState.state_env_conf_file_data_loaded.name,
             ],
             state_name=if_none(
                 state_name,
-                EnvState.state_merged_local_log_dir_abs_path_eval_finalized.name,
+                EnvState.state_derived_local_log_dir_abs_path_eval_finalized.name,
             ),
         )
 
@@ -3288,7 +4223,7 @@ class Bootstrapper_state_merged_local_log_dir_abs_path_eval_finalized(
         self,
     ) -> ValueType:
 
-        field_local_log_dir_rel_path: str = self._get_merged_value_or_default(
+        field_local_log_dir_rel_path: str = self._get_overridden_value_or_default(
             ConfField.field_local_log_dir_rel_path.value,
             ConfConstEnv.default_dir_rel_path_log,
         )
@@ -3297,21 +4232,21 @@ class Bootstrapper_state_merged_local_log_dir_abs_path_eval_finalized(
             EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name
         )
 
-        state_merged_local_log_dir_abs_path_eval_finalized = os.path.join(
+        state_derived_local_log_dir_abs_path_eval_finalized = os.path.join(
             state_primer_ref_root_dir_abs_path_eval_finalized,
             field_local_log_dir_rel_path,
         )
-        state_merged_local_log_dir_abs_path_eval_finalized = os.path.normpath(
-            state_merged_local_log_dir_abs_path_eval_finalized
+        state_derived_local_log_dir_abs_path_eval_finalized = os.path.normpath(
+            state_derived_local_log_dir_abs_path_eval_finalized
         )
 
-        assert os.path.isabs(state_merged_local_log_dir_abs_path_eval_finalized)
-        return state_merged_local_log_dir_abs_path_eval_finalized
+        assert os.path.isabs(state_derived_local_log_dir_abs_path_eval_finalized)
+        return state_derived_local_log_dir_abs_path_eval_finalized
 
 
 # noinspection PyPep8Naming
-class Bootstrapper_state_merged_local_tmp_dir_abs_path_eval_finalized(
-    AbstractMergedFieldCachingStateNode[str]
+class Bootstrapper_state_derived_local_tmp_dir_abs_path_eval_finalized(
+    AbstractOverriddenFieldCachingStateNode[str]
 ):
 
     def __init__(
@@ -3323,12 +4258,12 @@ class Bootstrapper_state_merged_local_tmp_dir_abs_path_eval_finalized(
             env_ctx=env_ctx,
             parent_states=[
                 EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name,
-                EnvState.state_client_conf_file_data.name,
-                EnvState.state_env_conf_file_data.name,
+                EnvState.state_client_conf_file_data_loaded.name,
+                EnvState.state_env_conf_file_data_loaded.name,
             ],
             state_name=if_none(
                 state_name,
-                EnvState.state_merged_local_tmp_dir_abs_path_eval_finalized.name,
+                EnvState.state_derived_local_tmp_dir_abs_path_eval_finalized.name,
             ),
         )
 
@@ -3336,7 +4271,7 @@ class Bootstrapper_state_merged_local_tmp_dir_abs_path_eval_finalized(
         self,
     ) -> ValueType:
 
-        field_local_tmp_dir_rel_path: str = self._get_merged_value_or_default(
+        field_local_tmp_dir_rel_path: str = self._get_overridden_value_or_default(
             ConfField.field_local_tmp_dir_rel_path.value,
             ConfConstEnv.default_dir_rel_path_tmp,
         )
@@ -3345,21 +4280,21 @@ class Bootstrapper_state_merged_local_tmp_dir_abs_path_eval_finalized(
             EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name
         )
 
-        state_merged_local_tmp_dir_abs_path_eval_finalized = os.path.join(
+        state_derived_local_tmp_dir_abs_path_eval_finalized = os.path.join(
             state_primer_ref_root_dir_abs_path_eval_finalized,
             field_local_tmp_dir_rel_path,
         )
-        state_merged_local_tmp_dir_abs_path_eval_finalized = os.path.normpath(
-            state_merged_local_tmp_dir_abs_path_eval_finalized
+        state_derived_local_tmp_dir_abs_path_eval_finalized = os.path.normpath(
+            state_derived_local_tmp_dir_abs_path_eval_finalized
         )
 
-        assert os.path.isabs(state_merged_local_tmp_dir_abs_path_eval_finalized)
-        return state_merged_local_tmp_dir_abs_path_eval_finalized
+        assert os.path.isabs(state_derived_local_tmp_dir_abs_path_eval_finalized)
+        return state_derived_local_tmp_dir_abs_path_eval_finalized
 
 
 # noinspection PyPep8Naming
-class Bootstrapper_state_merged_local_cache_dir_abs_path_eval_finalized(
-    AbstractMergedFieldCachingStateNode[str]
+class Bootstrapper_state_derived_local_cache_dir_abs_path_eval_finalized(
+    AbstractOverriddenFieldCachingStateNode[str]
 ):
 
     def __init__(
@@ -3371,12 +4306,12 @@ class Bootstrapper_state_merged_local_cache_dir_abs_path_eval_finalized(
             env_ctx=env_ctx,
             parent_states=[
                 EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name,
-                EnvState.state_client_conf_file_data.name,
-                EnvState.state_env_conf_file_data.name,
+                EnvState.state_client_conf_file_data_loaded.name,
+                EnvState.state_env_conf_file_data_loaded.name,
             ],
             state_name=if_none(
                 state_name,
-                EnvState.state_merged_local_cache_dir_abs_path_eval_finalized.name,
+                EnvState.state_derived_local_cache_dir_abs_path_eval_finalized.name,
             ),
         )
 
@@ -3384,7 +4319,7 @@ class Bootstrapper_state_merged_local_cache_dir_abs_path_eval_finalized(
         self,
     ) -> ValueType:
 
-        field_local_cache_dir_rel_path: str = self._get_merged_value_or_default(
+        field_local_cache_dir_rel_path: str = self._get_overridden_value_or_default(
             ConfField.field_local_cache_dir_rel_path.value,
             ConfConstEnv.default_dir_rel_path_cache,
         )
@@ -3393,21 +4328,21 @@ class Bootstrapper_state_merged_local_cache_dir_abs_path_eval_finalized(
             EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name
         )
 
-        state_merged_local_cache_dir_abs_path_eval_finalized = os.path.join(
+        state_derived_local_cache_dir_abs_path_eval_finalized = os.path.join(
             state_primer_ref_root_dir_abs_path_eval_finalized,
             field_local_cache_dir_rel_path,
         )
-        state_merged_local_cache_dir_abs_path_eval_finalized = os.path.normpath(
-            state_merged_local_cache_dir_abs_path_eval_finalized
+        state_derived_local_cache_dir_abs_path_eval_finalized = os.path.normpath(
+            state_derived_local_cache_dir_abs_path_eval_finalized
         )
 
-        assert os.path.isabs(state_merged_local_cache_dir_abs_path_eval_finalized)
-        return state_merged_local_cache_dir_abs_path_eval_finalized
+        assert os.path.isabs(state_derived_local_cache_dir_abs_path_eval_finalized)
+        return state_derived_local_cache_dir_abs_path_eval_finalized
 
 
 # noinspection PyPep8Naming
-class Bootstrapper_state_merged_project_descriptors_eval_finalized(
-    AbstractMergedFieldCachingStateNode[list]
+class Bootstrapper_state_derived_package_driver_eval_finalized(
+    AbstractOverriddenFieldCachingStateNode[PackageDriverType]
 ):
 
     def __init__(
@@ -3418,61 +4353,22 @@ class Bootstrapper_state_merged_project_descriptors_eval_finalized(
         super().__init__(
             env_ctx=env_ctx,
             parent_states=[
-                EnvState.state_client_conf_file_data.name,
-                EnvState.state_env_conf_file_data.name,
+                EnvState.state_client_conf_file_data_loaded.name,
+                EnvState.state_env_conf_file_data_loaded.name,
             ],
             state_name=if_none(
                 state_name,
-                EnvState.state_merged_project_descriptors_eval_finalized.name,
+                EnvState.state_derived_package_driver_eval_finalized.name,
             ),
         )
 
     def _eval_state_once(
         self,
     ) -> ValueType:
-
-        project_descriptors: list = self._get_merged_value_or_default(
-            ConfField.field_project_descriptors.value,
-            ConfConstEnv.default_project_descriptors,
-        )
-
-        return project_descriptors
-
-
-# noinspection PyPep8Naming
-class Bootstrapper_state_merged_package_driver_eval_finalized(
-    AbstractCachingStateNode[PackageDriverType]
-):
-
-    def __init__(
-        self,
-        env_ctx: EnvContext,
-        state_name: str | None = None,
-    ):
-        super().__init__(
-            env_ctx=env_ctx,
-            parent_states=[
-                EnvState.state_env_conf_file_data.name,
-                EnvState.state_merged_local_cache_dir_abs_path_eval_finalized.name,
-            ],
-            state_name=if_none(
-                state_name,
-                EnvState.state_merged_package_driver_eval_finalized.name,
-            ),
-        )
-
-    def _eval_state_once(
-        self,
-    ) -> ValueType:
-        state_env_conf_file_data: dict = self.eval_parent_state(
-            EnvState.state_env_conf_file_data.name
-        )
-
         field_package_driver: PackageDriverType
-
         if os.environ.get(EnvVar.var_PROTOPRIMER_PACKAGE_DRIVER.value, None) is None:
             field_package_driver = PackageDriverType[
-                state_env_conf_file_data.get(
+                self._get_overridden_value_or_default(
                     ConfField.field_package_driver.value,
                     ConfConstEnv.default_package_driver,
                 )
@@ -3483,6 +4379,159 @@ class Bootstrapper_state_merged_package_driver_eval_finalized(
             ]
 
         return field_package_driver
+
+
+# noinspection PyPep8Naming
+class Bootstrapper_state_derived_project_descriptors_eval_finalized(
+    AbstractOverriddenFieldCachingStateNode[list]
+):
+
+    def __init__(
+        self,
+        env_ctx: EnvContext,
+        state_name: str | None = None,
+    ):
+        super().__init__(
+            env_ctx=env_ctx,
+            parent_states=[
+                EnvState.state_client_conf_file_data_loaded.name,
+                EnvState.state_env_conf_file_data_loaded.name,
+            ],
+            state_name=if_none(
+                state_name,
+                EnvState.state_derived_project_descriptors_eval_finalized.name,
+            ),
+        )
+
+    def _eval_state_once(
+        self,
+    ) -> ValueType:
+
+        project_descriptors: list = self._get_overridden_value_or_default(
+            ConfField.field_project_descriptors.value,
+            ConfConstEnv.default_project_descriptors,
+        )
+
+        return project_descriptors
+
+
+# noinspection PyPep8Naming
+class Bootstrapper_state_derived_conf_data_loaded(AbstractCachingStateNode[dict]):
+    """
+    Implements: FT_00_22_19_59.derived_config.md
+    """
+
+    def __init__(
+        self,
+        env_ctx: EnvContext,
+        state_name: str | None = None,
+    ):
+        self.derived_data_env_states: list[str] = [
+            # ===
+            # `ConfLeap.leap_input`
+            EnvState.state_input_proto_code_file_abs_path_eval_finalized.name,
+            EnvState.state_input_proto_conf_primer_file_abs_path_eval_finalized.name,
+            # ===
+            # `ConfLeap.leap_primer`
+            EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name,
+            EnvState.state_primer_conf_client_dir_abs_path_eval_finalized.name,
+            EnvState.state_primer_conf_client_file_abs_path_eval_finalized.name,
+            # ===
+            # `ConfLeap.leap_client`
+            EnvState.state_client_local_env_conf_dir_rel_path_eval_finalized.name,
+            EnvState.state_client_conf_env_dir_abs_path_eval_finalized.name,
+            EnvState.state_client_conf_env_file_abs_path_eval_finalized.name,
+            # ===
+            # `ConfLeap.leap_env`
+            # nothing specific
+            # ===
+            # `ConfLeap.leap_derived`
+            EnvState.state_derived_required_python_file_abs_path_eval_finalized.name,
+            EnvState.state_derived_local_venv_dir_abs_path_eval_finalized.name,
+            EnvState.state_derived_local_log_dir_abs_path_eval_finalized.name,
+            EnvState.state_derived_local_tmp_dir_abs_path_eval_finalized.name,
+            EnvState.state_derived_local_cache_dir_abs_path_eval_finalized.name,
+            EnvState.state_derived_package_driver_eval_finalized.name,
+            EnvState.state_derived_project_descriptors_eval_finalized.name,
+        ]
+
+        # TODO: Is this needed given the list of dependencies in `derived_data_env_states`?
+        parent_states = [
+            EnvState.state_input_run_mode_arg_loaded.name,
+            EnvState.state_input_py_exec_var_loaded.name,
+            EnvState.state_primer_conf_file_data_loaded.name,
+            EnvState.state_client_conf_file_data_loaded.name,
+            EnvState.state_env_conf_file_data_loaded.name,
+            *self.derived_data_env_states,
+        ]
+
+        # The list parent states sorted by their definition order in `EnvState`:
+        parent_states.sort(
+            key=lambda parent_state: [enum_item.name for enum_item in EnvState].index(
+                parent_state
+            ),
+        )
+
+        super().__init__(
+            env_ctx=env_ctx,
+            parent_states=parent_states,
+            state_name=if_none(
+                state_name,
+                EnvState.state_derived_conf_data_loaded.name,
+            ),
+        )
+
+    def _eval_state_once(
+        self,
+    ) -> ValueType:
+
+        config_data_derived = {}
+        for derived_data_env_state in self.derived_data_env_states:
+            evaluated_value = self.eval_parent_state(derived_data_env_state)
+            if isinstance(evaluated_value, enum.Enum):
+                config_data_derived[derived_data_env_state] = evaluated_value.name
+            else:
+                config_data_derived[derived_data_env_state] = evaluated_value
+
+        if can_print_effective_config(self):
+            conf_derived = RootNode_derived(
+                node_indent=0,
+                orig_data=config_data_derived,
+            )
+            print(RenderConfigVisitor().render_node(conf_derived))
+
+        return config_data_derived
+
+
+# noinspection PyPep8Naming
+class Bootstrapper_state_effective_config_data_printed(AbstractCachingStateNode[int]):
+    """
+    Implements: FT_19_44_42_19.effective_config.md
+    """
+
+    def __init__(
+        self,
+        env_ctx: EnvContext,
+        state_name: str | None = None,
+    ):
+        super().__init__(
+            env_ctx=env_ctx,
+            parent_states=[
+                EnvState.state_derived_conf_data_loaded.name,
+            ],
+            state_name=if_none(
+                state_name,
+                EnvState.state_effective_config_data_printed.name,
+            ),
+        )
+
+    def _eval_state_once(
+        self,
+    ) -> ValueType:
+        # Nothing to do:
+        # If we reach this state,
+        # then, transitively, effective configs for all `ConfLeap.*` has been printed.
+        return 0
 
 
 # noinspection PyPep8Naming
@@ -3501,7 +4550,7 @@ class Bootstrapper_state_default_file_log_handler_configured(
                 EnvState.state_args_parsed.name,
                 EnvState.state_input_stderr_log_level_eval_finalized.name,
                 EnvState.state_input_start_id_var_loaded.name,
-                EnvState.state_merged_local_log_dir_abs_path_eval_finalized.name,
+                EnvState.state_derived_local_log_dir_abs_path_eval_finalized.name,
             ],
             state_name=if_none(
                 state_name,
@@ -3517,9 +4566,9 @@ class Bootstrapper_state_default_file_log_handler_configured(
             EnvState.state_input_start_id_var_loaded.name
         )
 
-        state_merged_local_log_dir_abs_path_eval_finalized: str = (
+        state_derived_local_log_dir_abs_path_eval_finalized: str = (
             self.eval_parent_state(
-                EnvState.state_merged_local_log_dir_abs_path_eval_finalized.name
+                EnvState.state_derived_local_log_dir_abs_path_eval_finalized.name
             )
         )
 
@@ -3538,11 +4587,11 @@ class Bootstrapper_state_default_file_log_handler_configured(
             file_log_level = state_input_stderr_log_level_eval_finalized
 
         log_file_abs_path = os.path.join(
-            state_merged_local_log_dir_abs_path_eval_finalized,
+            state_derived_local_log_dir_abs_path_eval_finalized,
             file_log_name,
         )
 
-        os.makedirs(state_merged_local_log_dir_abs_path_eval_finalized, exist_ok=True)
+        os.makedirs(state_derived_local_log_dir_abs_path_eval_finalized, exist_ok=True)
 
         file_handler: logging.Handler = logging.FileHandler(log_file_abs_path)
         file_handler.addFilter(PythonExecutableFilter())
@@ -3576,14 +4625,13 @@ class Bootstrapper_state_py_exec_required_reached(
             env_ctx=env_ctx,
             parent_states=[
                 EnvState.state_args_parsed.name,
-                EnvState.state_input_wizard_stage_arg_loaded.name,
                 EnvState.state_input_py_exec_var_loaded.name,
                 EnvState.state_input_start_id_var_loaded.name,
                 EnvState.state_input_proto_code_file_abs_path_eval_finalized.name,
                 EnvState.state_client_conf_env_file_abs_path_eval_finalized.name,
-                EnvState.state_merged_required_python_file_abs_path_eval_finalized.name,
-                EnvState.state_merged_local_venv_dir_abs_path_eval_finalized.name,
-                EnvState.state_merged_local_tmp_dir_abs_path_eval_finalized.name,
+                EnvState.state_derived_required_python_file_abs_path_eval_finalized.name,
+                EnvState.state_derived_local_venv_dir_abs_path_eval_finalized.name,
+                EnvState.state_derived_local_tmp_dir_abs_path_eval_finalized.name,
                 EnvState.state_default_file_log_handler_configured.name,
             ],
             state_name=if_none(
@@ -3604,8 +4652,8 @@ class Bootstrapper_state_py_exec_required_reached(
         )
 
         # TODO: Unused, but plugged in to form complete DAG: consider adding intermediate state to plug it in:
-        state_merged_local_tmp_dir_abs_path_eval_finalized = self.eval_parent_state(
-            EnvState.state_merged_local_tmp_dir_abs_path_eval_finalized.name
+        state_derived_local_tmp_dir_abs_path_eval_finalized = self.eval_parent_state(
+            EnvState.state_derived_local_tmp_dir_abs_path_eval_finalized.name
         )
 
         state_input_start_id_var_loaded: str = self.eval_parent_state(
@@ -3622,21 +4670,21 @@ class Bootstrapper_state_py_exec_required_reached(
             )
         )
 
-        state_merged_required_python_file_abs_path_eval_finalized: str = (
+        state_derived_required_python_file_abs_path_eval_finalized: str = (
             self.eval_parent_state(
-                EnvState.state_merged_required_python_file_abs_path_eval_finalized.name
+                EnvState.state_derived_required_python_file_abs_path_eval_finalized.name
             )
         )
-        state_merged_local_venv_dir_abs_path_eval_finalized: str = (
+        state_derived_local_venv_dir_abs_path_eval_finalized: str = (
             self.eval_parent_state(
-                EnvState.state_merged_local_venv_dir_abs_path_eval_finalized.name
+                EnvState.state_derived_local_venv_dir_abs_path_eval_finalized.name
             )
         )
 
         assert not is_sub_path(
-            state_merged_required_python_file_abs_path_eval_finalized,
-            state_merged_local_venv_dir_abs_path_eval_finalized,
-        ), f"Configured `python` [{state_merged_required_python_file_abs_path_eval_finalized}] must be outside of configured `venv` [{state_merged_local_venv_dir_abs_path_eval_finalized}]"
+            state_derived_required_python_file_abs_path_eval_finalized,
+            state_derived_local_venv_dir_abs_path_eval_finalized,
+        ), f"Configured `python` [{state_derived_required_python_file_abs_path_eval_finalized}] must be outside of configured `venv` [{state_derived_local_venv_dir_abs_path_eval_finalized}]"
 
         path_to_curr_python = get_path_to_curr_python()
         logger.debug(f"path_to_curr_python: {path_to_curr_python}")
@@ -3647,12 +4695,12 @@ class Bootstrapper_state_py_exec_required_reached(
 
         assert not is_sub_path(
             path_to_curr_python,
-            state_merged_local_venv_dir_abs_path_eval_finalized,
-        ), f"Current `python` [{path_to_curr_python}] must be outside of the `venv` [{state_merged_local_venv_dir_abs_path_eval_finalized}]."
+            state_derived_local_venv_dir_abs_path_eval_finalized,
+        ), f"Current `python` [{path_to_curr_python}] must be outside of the `venv` [{state_derived_local_venv_dir_abs_path_eval_finalized}]."
 
         if (
             path_to_curr_python
-            != state_merged_required_python_file_abs_path_eval_finalized
+            != state_derived_required_python_file_abs_path_eval_finalized
         ):
             assert state_input_py_exec_var_loaded <= PythonExecutable.py_exec_arbitrary
             state_py_exec_required_reached = PythonExecutable.py_exec_arbitrary
@@ -3660,12 +4708,9 @@ class Bootstrapper_state_py_exec_required_reached(
                 curr_py_exec=state_input_py_exec_var_loaded,
                 curr_python_path=path_to_curr_python,
                 next_py_exec=PythonExecutable.py_exec_required,
-                next_python_path=state_merged_required_python_file_abs_path_eval_finalized,
+                next_python_path=state_derived_required_python_file_abs_path_eval_finalized,
                 start_id=state_input_start_id_var_loaded,
                 proto_code_abs_file_path=state_input_proto_code_file_abs_path_eval_finalized,
-                wizard_stage=self.env_ctx.mutable_state_input_wizard_stage_arg_loaded.get_curr_value(
-                    self,
-                ),
             )
         else:
             assert state_input_py_exec_var_loaded <= PythonExecutable.py_exec_required
@@ -3689,12 +4734,11 @@ class Bootstrapper_state_reinstall_triggered(AbstractCachingStateNode[bool]):
             env_ctx=env_ctx,
             parent_states=[
                 EnvState.state_args_parsed.name,
-                EnvState.state_input_wizard_stage_arg_loaded.name,
                 EnvState.state_input_start_id_var_loaded.name,
                 EnvState.state_input_proto_code_file_abs_path_eval_finalized.name,
                 EnvState.state_client_conf_env_dir_abs_path_eval_finalized.name,
-                EnvState.state_merged_local_venv_dir_abs_path_eval_finalized.name,
-                EnvState.state_merged_local_tmp_dir_abs_path_eval_finalized.name,
+                EnvState.state_derived_local_venv_dir_abs_path_eval_finalized.name,
+                EnvState.state_derived_local_tmp_dir_abs_path_eval_finalized.name,
                 EnvState.state_py_exec_required_reached.name,
             ],
             state_name=if_none(
@@ -3738,28 +4782,30 @@ class Bootstrapper_state_reinstall_triggered(AbstractCachingStateNode[bool]):
         ):
             return False
 
-        state_merged_local_venv_dir_abs_path_eval_finalized = self.eval_parent_state(
-            EnvState.state_merged_local_venv_dir_abs_path_eval_finalized.name
+        state_derived_local_venv_dir_abs_path_eval_finalized = self.eval_parent_state(
+            EnvState.state_derived_local_venv_dir_abs_path_eval_finalized.name
         )
-        if os.path.exists(state_merged_local_venv_dir_abs_path_eval_finalized):
+        if os.path.exists(state_derived_local_venv_dir_abs_path_eval_finalized):
 
             # Move old `venv` to temporary directory:
 
-            state_merged_local_tmp_dir_abs_path_eval_finalized = self.eval_parent_state(
-                EnvState.state_merged_local_tmp_dir_abs_path_eval_finalized.name
+            state_derived_local_tmp_dir_abs_path_eval_finalized = (
+                self.eval_parent_state(
+                    EnvState.state_derived_local_tmp_dir_abs_path_eval_finalized.name
+                )
             )
 
             moved_venv_dir = os.path.join(
-                state_merged_local_tmp_dir_abs_path_eval_finalized,
+                state_derived_local_tmp_dir_abs_path_eval_finalized,
                 f"venv.before.{state_input_start_id_var_loaded}",
             )
 
             logger.info(
-                f"moving `venv` dir from [{state_merged_local_venv_dir_abs_path_eval_finalized}] to [{moved_venv_dir}]"
+                f"moving `venv` dir from [{state_derived_local_venv_dir_abs_path_eval_finalized}] to [{moved_venv_dir}]"
             )
 
             shutil.move(
-                state_merged_local_venv_dir_abs_path_eval_finalized, moved_venv_dir
+                state_derived_local_venv_dir_abs_path_eval_finalized, moved_venv_dir
             )
 
         state_client_conf_env_dir_abs_path_eval_finalized = self.eval_parent_state(
@@ -3788,9 +4834,9 @@ class Bootstrapper_state_package_driver_inited(
         super().__init__(
             env_ctx=env_ctx,
             parent_states=[
-                EnvState.state_merged_required_python_file_abs_path_eval_finalized.name,
-                EnvState.state_merged_local_cache_dir_abs_path_eval_finalized.name,
-                EnvState.state_merged_package_driver_eval_finalized.name,
+                EnvState.state_derived_required_python_file_abs_path_eval_finalized.name,
+                EnvState.state_derived_local_cache_dir_abs_path_eval_finalized.name,
+                EnvState.state_derived_package_driver_eval_finalized.name,
                 EnvState.state_reinstall_triggered.name,
             ],
             state_name=if_none(
@@ -3803,31 +4849,31 @@ class Bootstrapper_state_package_driver_inited(
         self,
     ) -> ValueType:
 
-        state_merged_required_python_file_abs_path_eval_finalized: str = (
+        state_derived_required_python_file_abs_path_eval_finalized: str = (
             self.eval_parent_state(
-                EnvState.state_merged_required_python_file_abs_path_eval_finalized.name
+                EnvState.state_derived_required_python_file_abs_path_eval_finalized.name
             )
         )
 
-        state_merged_package_driver_eval_finalized: PackageDriverType = (
+        state_derived_package_driver_eval_finalized: PackageDriverType = (
             self.eval_parent_state(
-                EnvState.state_merged_package_driver_eval_finalized.name
+                EnvState.state_derived_package_driver_eval_finalized.name
             )
         )
 
-        state_merged_local_cache_dir_abs_path_eval_finalized: str = (
+        state_derived_local_cache_dir_abs_path_eval_finalized: str = (
             self.eval_parent_state(
-                EnvState.state_merged_local_cache_dir_abs_path_eval_finalized.name
+                EnvState.state_derived_local_cache_dir_abs_path_eval_finalized.name
             )
         )
 
         package_driver: PackageDriverBase
-        if PackageDriverType.driver_uv == state_merged_package_driver_eval_finalized:
+        if PackageDriverType.driver_uv == state_derived_package_driver_eval_finalized:
             # TODO: assert python version suitable for `uv`
 
             uv_venv_abs_path = os.path.join(
                 # TODO: make it relative to "cache/venv" specifically (instead of directly to "cache"):
-                state_merged_local_cache_dir_abs_path_eval_finalized,
+                state_derived_local_cache_dir_abs_path_eval_finalized,
                 # TODO: take from config (or default constant):
                 "venv",
                 # TODO: take from config (or default constant):
@@ -3842,7 +4888,7 @@ class Bootstrapper_state_package_driver_inited(
                 # To use `PackageDriverType.driver_uv`, use `PackageDriverType.driver_pip` to install `uv` first:
                 pip_driver = PackageDriverPip()
                 pip_driver.create_venv(
-                    state_merged_required_python_file_abs_path_eval_finalized,
+                    state_derived_required_python_file_abs_path_eval_finalized,
                     uv_venv_abs_path,
                 )
                 uv_exec_venv_python_abs_path = os.path.join(
@@ -3856,20 +4902,21 @@ class Bootstrapper_state_package_driver_inited(
                     ],
                 )
 
-            if os.environ.get(EnvVar.var_PROTOPRIMER_TEST_MODE.value, None) is None:
-                assert os.path.isfile(uv_exec_abs_path)
+            assert os.path.isfile(uv_exec_abs_path)
 
             package_driver = PackageDriverUv(
                 uv_exec_abs_path=uv_exec_abs_path,
             )
 
-        elif PackageDriverType.driver_pip == state_merged_package_driver_eval_finalized:
+        elif (
+            PackageDriverType.driver_pip == state_derived_package_driver_eval_finalized
+        ):
             # Nothing to do:
             # `PackageDriverType.driver_pip` is available by default with the new ` venv ` without installation.
             package_driver = PackageDriverPip()
         else:
             raise AssertionError(
-                f"unsupported `{PackageDriverType.__name__}` [{state_merged_package_driver_eval_finalized.name}]"
+                f"unsupported `{PackageDriverType.__name__}` [{state_derived_package_driver_eval_finalized.name}]"
             )
 
         return package_driver
@@ -3892,13 +4939,12 @@ class Bootstrapper_state_py_exec_venv_reached(
             env_ctx=env_ctx,
             parent_states=[
                 EnvState.state_args_parsed.name,
-                EnvState.state_input_wizard_stage_arg_loaded.name,
                 EnvState.state_input_py_exec_var_loaded.name,
                 EnvState.state_input_start_id_var_loaded.name,
                 EnvState.state_input_proto_code_file_abs_path_eval_finalized.name,
                 EnvState.state_client_conf_env_file_abs_path_eval_finalized.name,
-                EnvState.state_merged_required_python_file_abs_path_eval_finalized.name,
-                EnvState.state_merged_local_venv_dir_abs_path_eval_finalized.name,
+                EnvState.state_derived_required_python_file_abs_path_eval_finalized.name,
+                EnvState.state_derived_local_venv_dir_abs_path_eval_finalized.name,
                 EnvState.state_reinstall_triggered.name,
                 EnvState.state_package_driver_inited.name,
             ],
@@ -3932,14 +4978,14 @@ class Bootstrapper_state_py_exec_venv_reached(
             )
         )
 
-        state_merged_required_python_file_abs_path_eval_finalized: str = (
+        state_derived_required_python_file_abs_path_eval_finalized: str = (
             self.eval_parent_state(
-                EnvState.state_merged_required_python_file_abs_path_eval_finalized.name
+                EnvState.state_derived_required_python_file_abs_path_eval_finalized.name
             )
         )
-        state_merged_local_venv_dir_abs_path_eval_finalized: str = (
+        state_derived_local_venv_dir_abs_path_eval_finalized: str = (
             self.eval_parent_state(
-                EnvState.state_merged_local_venv_dir_abs_path_eval_finalized.name
+                EnvState.state_derived_local_venv_dir_abs_path_eval_finalized.name
             )
         )
 
@@ -3948,7 +4994,7 @@ class Bootstrapper_state_py_exec_venv_reached(
         )
 
         venv_path_to_python: str = os.path.join(
-            state_merged_local_venv_dir_abs_path_eval_finalized,
+            state_derived_local_venv_dir_abs_path_eval_finalized,
             ConfConstGeneral.file_rel_path_venv_python,
         )
         path_to_curr_python: str = get_path_to_curr_python()
@@ -3960,49 +5006,46 @@ class Bootstrapper_state_py_exec_venv_reached(
 
         if is_sub_path(
             path_to_curr_python,
-            state_merged_local_venv_dir_abs_path_eval_finalized,
+            state_derived_local_venv_dir_abs_path_eval_finalized,
         ):
             raise AssertionError(
-                f"Current `python` [{path_to_curr_python}] must be outside of `venv` [{state_merged_local_venv_dir_abs_path_eval_finalized}]."
+                f"Current `python` [{path_to_curr_python}] must be outside of `venv` [{state_derived_local_venv_dir_abs_path_eval_finalized}]."
             )
 
         if os.environ.get(EnvVar.var_PROTOPRIMER_TEST_MODE.value, None) is None:
             if (
                 path_to_curr_python
-                != state_merged_required_python_file_abs_path_eval_finalized
+                != state_derived_required_python_file_abs_path_eval_finalized
             ):
                 raise AssertionError(
-                    f"Current `python` [{path_to_curr_python}] must match the required one [{state_merged_required_python_file_abs_path_eval_finalized}]."
+                    f"Current `python` [{path_to_curr_python}] must match the required one [{state_derived_required_python_file_abs_path_eval_finalized}]."
                 )
 
         assert state_input_py_exec_var_loaded <= PythonExecutable.py_exec_required
         state_py_exec_venv_reached = PythonExecutable.py_exec_required
-        if not os.path.exists(state_merged_local_venv_dir_abs_path_eval_finalized):
+        if not os.path.exists(state_derived_local_venv_dir_abs_path_eval_finalized):
             state_package_driver_inited.create_venv(
-                state_merged_required_python_file_abs_path_eval_finalized,
-                state_merged_local_venv_dir_abs_path_eval_finalized,
+                state_derived_required_python_file_abs_path_eval_finalized,
+                state_derived_local_venv_dir_abs_path_eval_finalized,
             )
         else:
             logger.info(
-                f"reusing existing `venv` [{state_merged_local_venv_dir_abs_path_eval_finalized}]"
+                f"reusing existing `venv` [{state_derived_local_venv_dir_abs_path_eval_finalized}]"
             )
             if not state_package_driver_inited.is_mine_venv(
-                state_merged_local_venv_dir_abs_path_eval_finalized,
+                state_derived_local_venv_dir_abs_path_eval_finalized,
             ):
                 raise AssertionError(
-                    f"`venv` [{state_merged_local_venv_dir_abs_path_eval_finalized}] was not created by this driver [{state_package_driver_inited.get_type().name}] retry with [{SyntaxArg.arg_reinstall}]"
+                    f"`venv` [{state_derived_local_venv_dir_abs_path_eval_finalized}] was not created by this driver [{state_package_driver_inited.get_type().name}] retry with [{SyntaxArg.arg_reinstall}]"
                 )
 
         switch_python(
             curr_py_exec=state_input_py_exec_var_loaded,
-            curr_python_path=state_merged_required_python_file_abs_path_eval_finalized,
+            curr_python_path=state_derived_required_python_file_abs_path_eval_finalized,
             next_py_exec=PythonExecutable.py_exec_venv,
             next_python_path=venv_path_to_python,
             start_id=state_input_start_id_var_loaded,
             proto_code_abs_file_path=state_input_proto_code_file_abs_path_eval_finalized,
-            wizard_stage=self.env_ctx.mutable_state_input_wizard_stage_arg_loaded.get_curr_value(
-                self,
-            ),
         )
 
         return state_py_exec_venv_reached
@@ -4023,7 +5066,7 @@ class Bootstrapper_state_protoprimer_package_installed(AbstractCachingStateNode[
                 EnvState.state_args_parsed.name,
                 EnvState.state_primer_ref_root_dir_abs_path_eval_finalized.name,
                 EnvState.state_client_conf_env_dir_abs_path_eval_finalized.name,
-                EnvState.state_merged_project_descriptors_eval_finalized.name,
+                EnvState.state_derived_project_descriptors_eval_finalized.name,
                 EnvState.state_package_driver_inited.name,
                 EnvState.state_py_exec_venv_reached.name,
             ],
@@ -4058,9 +5101,9 @@ class Bootstrapper_state_protoprimer_package_installed(AbstractCachingStateNode[
             EnvState.state_client_conf_env_dir_abs_path_eval_finalized.name
         )
 
-        state_merged_project_descriptors_eval_finalized: list[dict] = (
+        state_derived_project_descriptors_eval_finalized: list[dict] = (
             self.eval_parent_state(
-                EnvState.state_merged_project_descriptors_eval_finalized.name
+                EnvState.state_derived_project_descriptors_eval_finalized.name
             )
         )
 
@@ -4089,7 +5132,7 @@ class Bootstrapper_state_protoprimer_package_installed(AbstractCachingStateNode[
             logger.info(f"creating empty constraints file [{constraints_txt_path}]")
             write_text_file(constraints_txt_path, "")
 
-        if len(state_merged_project_descriptors_eval_finalized) == 0:
+        if len(state_derived_project_descriptors_eval_finalized) == 0:
             logger.warning(
                 f"{ValueName.value_project_descriptors.value} is empty - nothing to install"
             )
@@ -4099,7 +5142,7 @@ class Bootstrapper_state_protoprimer_package_installed(AbstractCachingStateNode[
             state_primer_ref_root_dir_abs_path_eval_finalized,
             get_path_to_curr_python(),
             constraints_txt_path,
-            state_merged_project_descriptors_eval_finalized,
+            state_derived_project_descriptors_eval_finalized,
         )
 
         return True
@@ -4172,7 +5215,6 @@ class Bootstrapper_state_py_exec_updated_protoprimer_package_reached(
             env_ctx=env_ctx,
             parent_states=[
                 EnvState.state_args_parsed.name,
-                EnvState.state_input_wizard_stage_arg_loaded.name,
                 EnvState.state_input_py_exec_var_loaded.name,
                 EnvState.state_input_start_id_var_loaded.name,
                 EnvState.state_input_proto_code_file_abs_path_eval_finalized.name,
@@ -4228,9 +5270,6 @@ class Bootstrapper_state_py_exec_updated_protoprimer_package_reached(
                 next_python_path=venv_path_to_python,
                 start_id=state_input_start_id_var_loaded,
                 proto_code_abs_file_path=state_input_proto_code_file_abs_path_eval_finalized,
-                wizard_stage=self.env_ctx.mutable_state_input_wizard_stage_arg_loaded.get_curr_value(
-                    self,
-                ),
             )
         else:
             # Successfully reached the end goal:
@@ -4364,7 +5403,6 @@ class Bootstrapper_state_py_exec_updated_proto_code(
             env_ctx=env_ctx,
             parent_states=[
                 EnvState.state_args_parsed.name,
-                EnvState.state_input_wizard_stage_arg_loaded.name,
                 EnvState.state_input_py_exec_var_loaded.name,
                 EnvState.state_input_start_id_var_loaded.name,
                 EnvState.state_input_proto_code_file_abs_path_eval_finalized.name,
@@ -4427,9 +5465,6 @@ class Bootstrapper_state_py_exec_updated_proto_code(
                 next_python_path=venv_path_to_python,
                 start_id=state_input_start_id_var_loaded,
                 proto_code_abs_file_path=state_input_proto_code_file_abs_path_eval_finalized,
-                wizard_stage=self.env_ctx.mutable_state_input_wizard_stage_arg_loaded.get_curr_value(
-                    self,
-                ),
             )
         else:
             # Successfully reached the end goal:
@@ -4535,16 +5570,7 @@ class Bootstrapper_state_command_executed(AbstractCachingStateNode[int]):
         ]
 
 
-class WizardState(enum.Enum):
-    """
-    These states replace some of the `EnvState` (named the same way) during `RunMode.mode_wizard`.
-    """
-
-    state_proto_conf_file_data = Wizard_state_proto_conf_file_data
-
-    state_client_conf_file_data = Wizard_state_client_conf_file_data
-
-    state_env_conf_file_data = Wizard_state_env_conf_file_data
+########################################################################################################################
 
 
 class EnvState(enum.Enum):
@@ -4558,8 +5584,6 @@ class EnvState(enum.Enum):
     FT_68_54_41_96.state_dependency.md
     """
 
-    # TODO: Rename Bootstrapper -> Primer or something else (to be different from Wizard):
-
     state_input_stderr_log_level_var_loaded = (
         Bootstrapper_state_input_stderr_log_level_var_loaded
     )
@@ -4571,10 +5595,6 @@ class EnvState(enum.Enum):
     )
 
     state_args_parsed = Bootstrapper_state_args_parsed
-
-    state_input_wizard_stage_arg_loaded = (
-        Bootstrapper_state_input_wizard_stage_arg_loaded
-    )
 
     state_input_stderr_log_level_eval_finalized = (
         Bootstrapper_state_input_stderr_log_level_eval_finalized
@@ -4603,27 +5623,27 @@ class EnvState(enum.Enum):
         Bootstrapper_state_input_proto_code_file_abs_path_eval_finalized
     )
 
-    state_input_proto_code_dir_abs_path_eval_finalized = (
-        Bootstrapper_state_input_proto_code_dir_abs_path_eval_finalized
-    )
-
     state_input_proto_conf_primer_file_abs_path_eval_finalized = (
         Bootstrapper_state_input_proto_conf_primer_file_abs_path_eval_finalized
     )
 
-    # The state is wizard-able by `Wizard_state_proto_conf_file_data`:
-    state_proto_conf_file_data = Bootstrapper_state_proto_conf_file_data
+    # `ConfLeap.leap_primer`:
+    state_primer_conf_file_data_loaded = Bootstrapper_state_primer_conf_file_data_loaded
 
     state_primer_ref_root_dir_abs_path_eval_finalized = (
         Bootstrapper_state_primer_ref_root_dir_abs_path_eval_finalized
+    )
+
+    state_primer_conf_client_dir_abs_path_eval_finalized = (
+        Bootstrapper_state_primer_conf_client_dir_abs_path_eval_finalized
     )
 
     state_primer_conf_client_file_abs_path_eval_finalized = (
         Bootstrapper_state_primer_conf_client_file_abs_path_eval_finalized
     )
 
-    # The state is wizard-able by `Wizard_state_client_conf_file_data`:
-    state_client_conf_file_data = Bootstrapper_state_client_conf_file_data
+    # `ConfLeap.leap_client`:
+    state_client_conf_file_data_loaded = Bootstrapper_state_client_conf_file_data_loaded
 
     state_client_local_env_conf_dir_rel_path_eval_finalized = (
         Bootstrapper_state_client_local_env_conf_dir_rel_path_eval_finalized
@@ -4633,47 +5653,50 @@ class EnvState(enum.Enum):
         Bootstrapper_state_client_conf_env_dir_abs_path_eval_finalized
     )
 
-    state_client_link_name_dir_rel_path_eval_finalized = (
-        Bootstrapper_state_client_link_name_dir_rel_path_eval_finalized
-    )
-
     state_client_conf_env_file_abs_path_eval_finalized = (
         Bootstrapper_state_client_conf_env_file_abs_path_eval_finalized
     )
 
-    # The state is wizard-able by `Wizard_state_env_conf_file_data`:
-    state_env_conf_file_data = Bootstrapper_state_env_conf_file_data
+    # `ConfLeap.leap_env`:
+    state_env_conf_file_data_loaded = Bootstrapper_state_env_conf_file_data_loaded
 
-    state_merged_required_python_file_abs_path_eval_finalized = (
-        Bootstrapper_state_merged_required_python_file_abs_path_eval_finalized
+    state_derived_required_python_file_abs_path_eval_finalized = (
+        Bootstrapper_state_derived_required_python_file_abs_path_eval_finalized
     )
 
     # TODO: log, tmp, venv, ... dirs should better be configured at client level:
-    state_merged_local_venv_dir_abs_path_eval_finalized = (
-        Bootstrapper_state_merged_local_venv_dir_abs_path_eval_finalized
+    state_derived_local_venv_dir_abs_path_eval_finalized = (
+        Bootstrapper_state_derived_local_venv_dir_abs_path_eval_finalized
     )
 
     # TODO: log, tmp, venv, ... dirs should better be configured at client level:
-    state_merged_local_log_dir_abs_path_eval_finalized = (
-        Bootstrapper_state_merged_local_log_dir_abs_path_eval_finalized
+    state_derived_local_log_dir_abs_path_eval_finalized = (
+        Bootstrapper_state_derived_local_log_dir_abs_path_eval_finalized
     )
 
     # TODO: log, tmp, venv, ... dirs should better be configured at client level:
-    state_merged_local_tmp_dir_abs_path_eval_finalized = (
-        Bootstrapper_state_merged_local_tmp_dir_abs_path_eval_finalized
+    state_derived_local_tmp_dir_abs_path_eval_finalized = (
+        Bootstrapper_state_derived_local_tmp_dir_abs_path_eval_finalized
     )
 
     # TODO: log, tmp, venv, ... dirs should better be configured at client level:
-    state_merged_local_cache_dir_abs_path_eval_finalized = (
-        Bootstrapper_state_merged_local_cache_dir_abs_path_eval_finalized
+    state_derived_local_cache_dir_abs_path_eval_finalized = (
+        Bootstrapper_state_derived_local_cache_dir_abs_path_eval_finalized
     )
 
-    state_merged_project_descriptors_eval_finalized = (
-        Bootstrapper_state_merged_project_descriptors_eval_finalized
+    state_derived_package_driver_eval_finalized = (
+        Bootstrapper_state_derived_package_driver_eval_finalized
     )
 
-    state_merged_package_driver_eval_finalized = (
-        Bootstrapper_state_merged_package_driver_eval_finalized
+    state_derived_project_descriptors_eval_finalized = (
+        Bootstrapper_state_derived_project_descriptors_eval_finalized
+    )
+
+    # `ConfLeap.leap_derived`:
+    state_derived_conf_data_loaded = Bootstrapper_state_derived_conf_data_loaded
+
+    state_effective_config_data_printed = (
+        Bootstrapper_state_effective_config_data_printed
     )
 
     state_default_file_log_handler_configured = (
@@ -4722,7 +5745,7 @@ class TargetState(enum.Enum):
     target_run_mode_executed = EnvState.state_run_mode_executed
 
     # When all config files loaded:
-    target_config_loaded = EnvState.state_merged_package_driver_eval_finalized
+    target_config_loaded = EnvState.state_derived_package_driver_eval_finalized
 
     # The final state before switching to `PrimerRuntime.runtime_neo`:
     target_proto_bootstrap_completed = EnvState.state_command_executed
@@ -4849,10 +5872,6 @@ class EnvContext:
         # TODO: Do not set it on Context - use bootstrap-able values:
         # TODO: Find "Universal Sink":
         self.final_state: str = TargetState.target_proto_bootstrap_completed.value.name
-
-        self.mutable_state_input_wizard_stage_arg_loaded = MutableValue(
-            EnvState.state_input_wizard_stage_arg_loaded.name,
-        )
 
         self._build_default_graph()
 
@@ -5010,268 +6029,31 @@ def warn_on_missing_conf_file(
     file_abs_path: str,
 ) -> None:
     logger.warning(
-        f"File [{file_abs_path}] does not exists - re-run with [{SyntaxArg.arg_mode_wizard}] to create it."
+        f"File [{file_abs_path}] does not exist - use [{SyntaxArg.arg_mode_config}] for description."
     )
 
 
-def wizard_confirm_single_value(
+def can_print_effective_config(
     state_node: StateNode,
-    conf_leap: ConfLeap,
-    wizard_meta: FieldWizardMeta,
-    file_data: dict,
-    sub_ordinal_n: int,
-    sub_size: int,
-    total_ordinal_n: int,
-    total_size: int,
-) -> None:
+) -> bool:
     """
-    Wizard individual field provided by `FieldWizardMeta`.
+    See: FT_19_44_42_19.effective_config.md
     """
 
-    while True:
-        print("---")
-        print(f"Total progress: {total_ordinal_n}/{total_size}")
-        print(f"[{conf_leap.name}] progress: {sub_ordinal_n}/{sub_size}")
-        print(
-            f"{TermColor.field_name.value}Field: {wizard_meta.field_name}{TermColor.reset_style.value}"
-        )
-        print(
-            f"{TermColor.field_description.value}Description: {wizard_meta.field_help(wizard_meta, state_node, file_data)}{TermColor.reset_style.value}"
-        )
-
-        field_warning: str | None = wizard_meta.warn_if_not_wizard_able(
-            wizard_meta,
-            state_node,
-            file_data,
-        )
-        if field_warning is not None:
-            print(field_warning)
-            while True:
-                user_confirmation = input(f"Acknowledge this (a) >").lower().strip()
-
-                if user_confirmation == "a":
-                    print(f"Continuing...")
-                    # break the inner and the outer loops:
-                    return
-                else:
-                    # continue the inner loop
-                    continue
-
-        curr_param_value = wizard_meta.read_value(
-            wizard_meta,
-            state_node,
-            file_data,
-        )
-
-        print(
-            f"Enter blank to keep the current value [{curr_param_value}] or provide a new value:"
-        )
-        new_param_value = input(f"[{curr_param_value}] >").strip()
-
-        if new_param_value == "":
-            # blank keeps the current value:
-            new_param_value = curr_param_value
-
-        review_text: str | None = wizard_meta.review_value(
-            wizard_meta,
-            state_node,
-            file_data,
-            new_param_value,
-        )
-        if review_text is not None:
-            print(
-                f"{TermColor.field_review.value}{review_text}{TermColor.reset_style.value}"
-            )
-
-        validation_error = wizard_meta.validate_value(
-            wizard_meta,
-            state_node,
-            file_data,
-            new_param_value,
-        )
-        if validation_error is not None:
-            print(
-                f"{TermColor.error_text.value}{validation_error}{TermColor.reset_style.value}"
-            )
-            print(f"Failing...")
-            continue
-
-        while True:
-
-            user_confirmation = (
-                input(
-                    f"Confirm the value [{new_param_value}] (enter blank to skip, or y/n) >"
-                )
-                .lower()
-                .strip()
-            )
-
-            if user_confirmation == "y":
-                print(f"Confirming...")
-                curr_param_value = new_param_value
-                # value has been changed - write `new_param_value`:
-                wizard_meta.write_value(
-                    wizard_meta,
-                    state_node,
-                    file_data,
-                    new_param_value,
-                )
-                # break the inner and the outer loops:
-                return
-            elif user_confirmation == "":
-                print(f"Skipping...")
-                # TODO: It is not necessary to write.
-                #       But at the moment, this is a workaround to in case like
-                #       `WizardField.field_env_build_root_dir_rel_path` when the value read
-                #       might be a synthesized default (and the file still requires to be rendered correctly).
-                # value is not changed - write `curr_param_value`:
-                wizard_meta.write_value(
-                    wizard_meta,
-                    state_node,
-                    file_data,
-                    curr_param_value,
-                )
-                # break the inner and the outer loops:
-                return
-            elif user_confirmation == "n":
-                print(f"Retrying...")
-                # break the inner loop to retry the outer:
-                break
-            else:
-                continue
-
-
-def wizard_conf_file(
-    state_node: StateNode,
-    conf_leap: ConfLeap,
-    conf_abs_path: str,
-    # TODO: Instead of providing entire file, populate `FieldWizardMeta` how to compute default value:
-    default_file_data: dict,
-) -> dict:
-    """
-    A wrapper over `wizard_conf_leap` to persist the file data.
-    """
-
-    file_data: dict
-    if os.path.exists(conf_abs_path):
-        file_data = read_json_file(conf_abs_path)
-    else:
-        file_data = default_file_data
-
-    verify_conf_file_data_contains_known_fields_only(
-        conf_abs_path,
-        file_data,
+    state_input_run_mode_arg_loaded: RunMode = state_node.eval_parent_state(
+        EnvState.state_input_run_mode_arg_loaded.name
     )
 
-    wizard_stage: WizardStage = (
-        state_node.env_ctx.mutable_state_input_wizard_stage_arg_loaded.get_curr_value(
-            state_node,
-        )
+    state_input_py_exec_var_loaded: PythonExecutable = state_node.eval_parent_state(
+        EnvState.state_input_py_exec_var_loaded.name
     )
 
-    if wizard_stage == WizardStage.wizard_started:
-        wizard_conf_leap(
-            state_node,
-            conf_leap,
-            conf_abs_path,
-            file_data,
-        )
-        os.makedirs(
-            os.path.dirname(conf_abs_path),
-            exist_ok=True,
-        )
-        write_json_file(
-            conf_abs_path,
-            file_data,
-        )
-
-    return file_data
-
-
-def wizard_conf_leap(
-    state_node: StateNode,
-    conf_leap: ConfLeap,
-    conf_abs_path: str,
-    file_data: dict,
-) -> None:
-    """
-    Wizard through every field for the given `ConfLeap`.
-    """
-
-    enumerated_conf_leap_fields = WizardField.enumerate_conf_leap_wizardable_fields(
-        conf_leap
+    return (
+        state_input_py_exec_var_loaded.value
+        # `PythonExecutable.py_exec_arbitrary` ensures that the path to `proto_code` is outside `venv`:
+        == PythonExecutable.py_exec_arbitrary.value
+        and state_input_run_mode_arg_loaded == RunMode.mode_config
     )
-    total_size = len(WizardField)
-    sub_size = len(enumerated_conf_leap_fields)
-
-    while True:
-
-        print("===")
-        print(f"File path: {conf_abs_path}")
-        print(f"[{conf_leap.name}] summary before:")
-        wizard_print_summary(file_data, conf_leap)
-
-        # Wizard fields:
-        for sub_ordinal_i, (total_ordinal_i, wizard_field) in enumerate(
-            enumerated_conf_leap_fields
-        ):
-            wizard_confirm_single_value(
-                state_node,
-                conf_leap,
-                wizard_field.value,
-                file_data,
-                sub_ordinal_i + 1,
-                sub_size,
-                total_ordinal_i + 1,
-                total_size,
-            )
-
-        print("===")
-        print(f"File path: {conf_abs_path}")
-        print(f"[{conf_leap.name}] summary after:")
-        wizard_print_summary(file_data, conf_leap)
-
-        # Confirm fields together:
-        while True:
-            user_confirmation = input(f"Confirm the values (y/n) >").lower().strip()
-
-            if user_confirmation == "y":
-                print(f"Confirming...")
-                # break the inner and the outer loops:
-                return
-            elif user_confirmation == "":
-                # continue the inner loop
-                continue
-            elif user_confirmation == "n":
-                print(f"Retrying...")
-                # break the inner loop to retry the outer:
-                break
-            else:
-                continue
-
-
-def wizard_print_summary(
-    file_data,
-    conf_leap: ConfLeap,
-) -> None:
-
-    enumerated_conf_leap_fields = WizardField.enumerate_conf_leap_wizardable_fields(
-        conf_leap
-    )
-
-    # Construct data for specific `conf_leap` only:
-    summary_data = {}
-    for total_ordinal_i, wizard_field in enumerated_conf_leap_fields:
-        wizard_meta = wizard_field.value
-        if wizard_meta.root_ancestor_field not in file_data:
-            raise AssertionError(
-                f"missing field_name [{wizard_meta.field_name}] in field_data [{file_data}] with root_ancestor_field [{wizard_meta.root_ancestor_field}]"
-            )
-        summary_data[wizard_meta.root_ancestor_field] = file_data[
-            wizard_meta.root_ancestor_field
-        ]
-
-    print(json.dumps(summary_data, indent=4))
 
 
 def verify_conf_file_data_contains_known_fields_only(
@@ -5283,18 +6065,10 @@ def verify_conf_file_data_contains_known_fields_only(
 
     Because config files can be combined, any defined field (regardless of `ConfLeap`) is possible.
 
-    See: FT_00_22_19_59.merged_config.md
+    See: FT_00_22_19_59.derived_config.md
     """
-    expected_fields = {
-        wizard_field.value.root_ancestor_field
-        for _, wizard_field in WizardField.enumerate_possible_fields()
-    }
-    actual_fields = set(file_data.keys())
-
-    extra_fields = actual_fields - expected_fields
-
-    for field_name in extra_fields:
-        logger.warning(f"extra field [{field_name}] in config file [{file_path}]")
+    # TODO: After removal of `--wizard` is this still needed?
+    #       All unknown fields are reported by `--config`.
 
 
 def switch_python(
@@ -5304,7 +6078,6 @@ def switch_python(
     next_python_path: str,
     start_id: str,
     proto_code_abs_file_path: str | None,
-    wizard_stage: WizardStage,
     required_environ: dict | None = None,
 ):
     logger.info(
@@ -5320,14 +6093,6 @@ def switch_python(
         *sys.argv,
         # ---
     ]
-
-    if wizard_stage != WizardStage.wizard_started:
-        exec_argv.extend(
-            [
-                SyntaxArg.arg_wizard_stage,
-                wizard_stage.value,
-            ]
-        )
 
     if required_environ is None:
         required_environ = os.environ.copy()
