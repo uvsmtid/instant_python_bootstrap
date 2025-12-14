@@ -1,7 +1,22 @@
 
 # instant_python_bootstrap
 
-This [bootstrap.py][bootstrap_script] script hides "evolving setup details" from your users behind a **single click**.
+A "drop-in" [bootstrap.py][bootstrap_script] script for ((pure) `python`) projects.
+
+## Why?
+
+It eliminates users' efforts by hiding "continuously evolving setup details":
+
+*   single-click
+*   zero thinking = no args
+*   immediately usable:
+    *   no deps
+    *   no configs
+*   simplicity **vs** flexibility:
+    *   basic outside: no tooling knowledge required
+    *   standard inside: native `pip` or fast `uv`
+*   cross-platform: Linux, Mac, Windows
+*   single lang: pure `python` even before `venv` is ready
 
 ## How?
 
@@ -22,19 +37,7 @@ This [bootstrap.py][bootstrap_script] script hides "evolving setup details" from
     ./bootstrap.py
     ```
 
-## Why?
-
-*   one-click
-*   by default:
-    *   no args
-    *   no deps
-    *   no configs
-*   user-friendly: no tooling knowledge required
-*   cross-platform: Linux, Mac, Windows
-*   backed by: native `pip` or fast `uv`
-*   pure `python` even before `venv` is ready
-
-## Next: evolving setup details
+## Next: continuously evolving setup details
 
 This repo demonstrates a trivial use case (extend-able into any sophisticated bootstrap sequence).
 
