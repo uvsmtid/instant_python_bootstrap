@@ -1,11 +1,11 @@
-cfgv==3.4.0
+cfgv==3.5.0
 distlib==0.4.0
-filelock==3.20.0
+filelock==3.20.3
 identify==2.6.15
-local-repo @ git+https://github.com/uvsmtid/protoprimer.git@11737771d527111ab6ed74a2de9f3933a0734e99#subdirectory=src/local_repo
-nodeenv==1.9.1
-platformdirs==4.5.0
-pre-commit==4.4.0
+local-repo @ git+https://github.com/uvsmtid/protoprimer.git@eaf749fd22318a99fc184faceb96ae5f90e32f96#subdirectory=src/local_repo
+nodeenv==1.10.0
+platformdirs==4.5.1
+pre-commit==4.5.1
 pyyaml==6.0.3
 setuptools==80.9.0
-virtualenv==20.35.4
+virtualenv==20.36.1
