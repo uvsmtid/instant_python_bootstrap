@@ -1,11 +1,20 @@
+beautifulsoup4==4.14.3
+certifi==2026.1.4
 cfgv==3.5.0
+charset-normalizer==3.4.4
 distlib==0.4.0
 filelock==3.20.3
 identify==2.6.15
-local-repo @ git+https://github.com/uvsmtid/protoprimer.git@eaf749fd22318a99fc184faceb96ae5f90e32f96#subdirectory=src/local_repo
+idna==3.11
+local-repo @ git+https://github.com/uvsmtid/protoprimer.git@cbc77847047f70f42868cfcd9e9bb3869e5ce8e7#subdirectory=src/local_repo
 nodeenv==1.10.0
 platformdirs==4.5.1
 pre-commit==4.5.1
 pyyaml==6.0.3
+requests==2.32.5
 setuptools==80.9.0
+soupsieve==2.8.3
+tomli==2.4.0
+typing-extensions==4.15.0
+urllib3==2.6.3
 virtualenv==20.36.1
