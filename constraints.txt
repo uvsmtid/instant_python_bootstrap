@@ -6,7 +6,7 @@ distlib==0.4.0
 filelock==3.20.3
 identify==2.6.15
 idna==3.11
-local-repo @ git+https://github.com/uvsmtid/protoprimer.git@cbc77847047f70f42868cfcd9e9bb3869e5ce8e7#subdirectory=src/local_repo
+local-repo @ git+https://github.com/uvsmtid/protoprimer.git@f65a34a3fa1c2fdd1f4138e3ee6358997172885d#subdirectory=src/local_repo
 nodeenv==1.10.0
 platformdirs==4.5.1
 pre-commit==4.5.1

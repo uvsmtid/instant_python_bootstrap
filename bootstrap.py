@@ -4051,7 +4051,10 @@ class Bootstrapper_state_primer_conf_file_data_loaded(AbstractCachingStateNode[d
         if os.path.exists(state_primer_conf_file_abs_path_inited):
             file_data = read_json_file(state_primer_conf_file_abs_path_inited)
         else:
-            warn_on_missing_conf_file(state_primer_conf_file_abs_path_inited)
+            warn_once_at_state_stride(
+                missing_conf_file_message(state_primer_conf_file_abs_path_inited),
+                self.env_ctx.get_stride(),
+            )
             file_data = {}
 
         if can_print_effective_config(self):
@@ -4133,8 +4136,9 @@ class Bootstrapper_state_ref_root_dir_abs_path_inited(AbstractCachingStateNode[s
 
         state_ref_root_dir_abs_path_inited: str
         if field_client_dir_rel_path is None:
-            logger.warning(
-                f"Field `{ConfField.field_ref_root_dir_rel_path.value}` is [{field_client_dir_rel_path}] - use [{RunMode.mode_config.value}] sub-command for description."
+            warn_once_at_state_stride(
+                f"Field `{ConfField.field_ref_root_dir_rel_path.value}` is [{field_client_dir_rel_path}] - use [{RunMode.mode_config.value}] sub-command for description.",
+                self.env_ctx.get_stride(),
             )
             state_ref_root_dir_abs_path_inited = proto_code_dir_abs_path
         else:
@@ -4281,7 +4285,10 @@ class Bootstrapper_state_client_conf_file_data_loaded(AbstractCachingStateNode[d
         if os.path.exists(state_global_conf_file_abs_path_inited):
             file_data = read_json_file(state_global_conf_file_abs_path_inited)
         else:
-            warn_on_missing_conf_file(state_global_conf_file_abs_path_inited)
+            warn_once_at_state_stride(
+                missing_conf_file_message(state_global_conf_file_abs_path_inited),
+                self.env_ctx.get_stride(),
+            )
             file_data = {}
 
         if can_print_effective_config(self):
@@ -4388,8 +4395,9 @@ class Bootstrapper_state_selected_env_dir_rel_path_inited(
                 )
             )
             if field_default_env_dir_rel_path is None:
-                logger.warning(
-                    f"Field `{ConfField.field_default_env_dir_rel_path.value}` is [{field_default_env_dir_rel_path}] - use [{RunMode.mode_config.value}] sub-command for description."
+                warn_once_at_state_stride(
+                    f"Field `{ConfField.field_default_env_dir_rel_path.value}` is [{field_default_env_dir_rel_path}] - use [{RunMode.mode_config.value}] sub-command for description.",
+                    self.env_ctx.get_stride(),
                 )
                 return None
             if os.path.isabs(field_default_env_dir_rel_path):
@@ -4620,7 +4628,10 @@ class Bootstrapper_state_env_conf_file_data_loaded(AbstractCachingStateNode[dict
         if os.path.exists(state_local_conf_file_abs_path_inited):
             file_data = read_json_file(state_local_conf_file_abs_path_inited)
         else:
-            warn_on_missing_conf_file(state_local_conf_file_abs_path_inited)
+            warn_once_at_state_stride(
+                missing_conf_file_message(state_local_conf_file_abs_path_inited),
+                self.env_ctx.get_stride(),
+            )
             file_data = {}
 
         if can_print_effective_config(self):
@@ -6799,12 +6810,18 @@ def rename_to_moved_state_name(state_name: str) -> str:
     return f"_{state_name}"
 
 
-def warn_on_missing_conf_file(
+def missing_conf_file_message(
     file_abs_path: str,
+) -> str:
+    return f"File [{file_abs_path}] does not exist - use [{RunMode.mode_config.value}] sub-command for description."
+
+
+def warn_once_at_state_stride(
+    log_message,
+    state_stride: StateStride,
 ) -> None:
-    logger.warning(
-        f"File [{file_abs_path}] does not exist - use [{RunMode.mode_config.value}] sub-command for description."
-    )
+    if state_stride == StateStride.stride_py_arbitrary:
+        logger.warning(log_message)
 
 
 def can_print_effective_config(
