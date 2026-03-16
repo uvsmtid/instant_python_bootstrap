@@ -15,8 +15,11 @@ requires-python = ">=3.7"
 
 dependencies = [
     "setuptools",
+
     # NOTE: Even this is not required for minimal setup:
-    "protoprimer @ git+https://github.com/uvsmtid/protoprimer.git@main#subdirectory=src/protoprimer",
+    # "protoprimer @ git+https://github.com/uvsmtid/protoprimer.git@main#subdirectory=src/protoprimer",
+
+    # NOTE: This is used purely to share some tools:
     "local_repo @ git+https://github.com/uvsmtid/protoprimer.git@main#subdirectory=src/local_repo",
 ]
 
