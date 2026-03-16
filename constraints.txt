@@ -10,6 +10,7 @@ local-repo @ git+https://github.com/uvsmtid/protoprimer.git@f65a34a3fa1c2fdd1f41
 nodeenv==1.10.0
 platformdirs==4.9.4
 pre-commit==4.5.1
+protoprimer @ git+https://github.com/uvsmtid/protoprimer.git@f65a34a3fa1c2fdd1f4138e3ee6358997172885d#subdirectory=src/protoprimer
 python-discovery==1.1.3
 pyyaml==6.0.3
 requests==2.32.5
